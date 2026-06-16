@@ -6,7 +6,7 @@ MediMind AI is **not** a patient-facing app. It is a clinical operations platfor
 
 ---
 
-## 🏥 What It Does
+## What It Does
 
 MediMind digitizes and intelligences the full patient lifecycle inside a clinic:
 
@@ -23,7 +23,7 @@ Every stage is powered by AI — from adaptive questioning to differential diagn
 
 ---
 
-## 🧑‍💼 Three Separate Role Dashboards
+## Three Separate Role Dashboards
 
 | Role | Access | Key Responsibilities |
 |------|--------|----------------------|
@@ -35,7 +35,7 @@ Each dashboard has its own login, layout, navigation, and component set. Role is
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
 medimind-dev-plan/
@@ -75,7 +75,7 @@ medimind-dev-plan/
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
 | Layer | Technology |
@@ -100,7 +100,7 @@ medimind-dev-plan/
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - Node.js 18+
@@ -139,7 +139,7 @@ The frontend will be available at **http://localhost:3000**
 
 ---
 
-## 🎨 Design System
+## Design System
 
 MediMind uses a premium clinical aesthetic — dark, authoritative, and precise.
 
@@ -151,7 +151,7 @@ MediMind uses a premium clinical aesthetic — dark, authoritative, and precise.
 
 ---
 
-## 🤖 AI Features (Planned Integration)
+## AI Features (Planned Integration)
 
 - **Dynamic Questioning Engine** — AI generates contextual follow-up questions based on patient answers in real time
 - **Clinical Summary Generation** — AI synthesizes assessment data into structured clinical summaries
@@ -162,7 +162,7 @@ MediMind uses a premium clinical aesthetic — dark, authoritative, and precise.
 
 ---
 
-## 📋 Development Status
+## Development Status
 
 | Module | Status |
 |--------|--------|
@@ -179,12 +179,12 @@ MediMind uses a premium clinical aesthetic — dark, authoritative, and precise.
 
 ---
 
-## 👥 Contributing
+## Contributing
 
 This is a private development project. Architecture decisions and sprint planning live in the `.dev/` folder (not committed to this repo).
 
 ---
 
-## 📄 License
+## License
 
 Private — All rights reserved.
