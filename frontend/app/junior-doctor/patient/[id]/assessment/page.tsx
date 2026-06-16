@@ -10,6 +10,7 @@ import { AssessmentTimeline } from "@/components/junior-doctor/AssessmentTimelin
 import { AnswerInput } from "@/components/junior-doctor/AnswerInput";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { QuestionService } from "@/services/question.service";
 import { Spinner } from "@/components/ui/LoadingState";
 
@@ -28,6 +29,10 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
   const assessment = assessments[patientId];
 
   const [chiefComplaint, setChiefComplaint] = useState(patient?.chiefComplaint || "");
+  const [bp, setBp] = useState(patient?.vitals?.bp || "");
+  const [hr, setHr] = useState(patient?.vitals?.hr?.toString() || "");
+  const [temp, setTemp] = useState(patient?.vitals?.temp || "");
+  const [spo2, setSpo2] = useState(patient?.vitals?.spo2?.toString() || "");
   const [generating, setGenerating] = useState(false);
 
   if (!patient) {
@@ -48,7 +53,12 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
     setGenerating(true);
     try {
       const questions = await QuestionService.generateQuestions(chiefComplaint);
-      startAssessment(patientId, chiefComplaint, questions);
+      startAssessment(patientId, chiefComplaint, questions, {
+        bp: bp || undefined,
+        hr: hr ? parseInt(hr, 10) : undefined,
+        temp: temp || undefined,
+        spo2: spo2 ? parseInt(spo2, 10) : undefined,
+      });
       router.push(`/junior-doctor/patient/${patientId}/questions`);
     } catch (err) {
       console.error(err);
@@ -95,6 +105,40 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
                   rows={6}
                   dictationSample="Patient reports left side earache lasting 3 days. Notes localized throbbing pain, sleep interruption, and subjective fever yesterday evening. Denies any ear drainage or cold symptoms."
                 />
+              </div>
+
+              <div className="border-t border-gray-200 pt-6">
+                <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4">
+                  Patient Triage Vitals
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <Input
+                    label="Blood Pressure"
+                    value={bp}
+                    onChange={(e) => setBp(e.target.value)}
+                    placeholder="e.g. 120/80"
+                  />
+                  <Input
+                    label="Heart Rate (bpm)"
+                    type="number"
+                    value={hr}
+                    onChange={(e) => setHr(e.target.value)}
+                    placeholder="e.g. 72"
+                  />
+                  <Input
+                    label="Temperature"
+                    value={temp}
+                    onChange={(e) => setTemp(e.target.value)}
+                    placeholder="e.g. 98.6 °F"
+                  />
+                  <Input
+                    label="Oxygen Saturation (%)"
+                    type="number"
+                    value={spo2}
+                    onChange={(e) => setSpo2(e.target.value)}
+                    placeholder="e.g. 98"
+                  />
+                </div>
               </div>
 
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">

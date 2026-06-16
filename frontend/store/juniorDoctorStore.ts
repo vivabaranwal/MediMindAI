@@ -108,7 +108,7 @@ interface JuniorDoctorStore {
   
   // Actions
   selectPatient: (patientId: number | null) => void;
-  startAssessment: (patientId: number, chiefComplaint: string, questions: Question[]) => void;
+  startAssessment: (patientId: number, chiefComplaint: string, questions: Question[], vitals?: Patient["vitals"]) => void;
   updateQuestionStatus: (patientId: number, questionId: string, status: "suggested" | "accepted" | "rejected") => void;
   updateQuestionText: (patientId: number, questionId: string, text: string) => void;
   answerQuestion: (patientId: number, questionId: string, answer: string) => void;
@@ -125,10 +125,17 @@ export const useJuniorDoctorStore = create<JuniorDoctorStore>((set) => ({
 
   selectPatient: (patientId) => set({ activePatientId: patientId }),
 
-  startAssessment: (patientId, chiefComplaint, questions) =>
+  startAssessment: (patientId, chiefComplaint, questions, vitals) =>
     set((state) => {
       const updatedPatients = state.patients.map((p) =>
-        p.id === patientId ? { ...p, status: "In Assessment" as const, chiefComplaint } : p
+        p.id === patientId
+          ? {
+              ...p,
+              status: "In Assessment" as const,
+              chiefComplaint,
+              vitals: vitals ? { ...p.vitals, ...vitals } : p.vitals,
+            }
+          : p
       );
       return {
         patients: updatedPatients,
