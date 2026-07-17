@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
@@ -9,6 +9,7 @@ import { DoctorBriefCard } from "@/components/senior-doctor/DoctorBriefCard";
 import { ClinicalTimeline } from "@/components/senior-doctor/ClinicalTimeline";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/LoadingState";
 
 interface FollowUpPageProps {
   params: {
@@ -26,9 +27,41 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
     followups,
     saveFollowUp,
     completeConsultation,
+    loadEncounterForPatient,
+    savePrescriptionDraft,
+    completeConsultationApi,
   } = useSeniorDoctorStore();
 
   const patientId = Number(params.id);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [completing, setCompleting] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        await loadEncounterForPatient(patientId);
+      } catch (err: unknown) {
+        if (active) {
+          const e = err as Error;
+          setError(e.message || "Failed to load patient and care plan details.");
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [patientId, loadEncounterForPatient]);
+
   const patient = patients.find((p) => p.id === patientId);
   const assessment = assessments[patientId];
   const patientRecs = recommendations[patientId] || [];
@@ -37,13 +70,23 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
   const prescription = prescriptions[patientId];
   const followup = followups[patientId];
 
-  const [completing, setCompleting] = useState(false);
-  const [success, setSuccess] = useState(false);
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading Care Planner...
+        </span>
+      </div>
+    );
+  }
 
-  if (!patient) {
+  if (error || !patient) {
     return (
       <div className="text-center py-16 space-y-4">
-        <h2 className="text-xl font-bold text-gray-500 uppercase">Patient Record Not Found</h2>
+        <h2 className="text-xl font-bold text-gray-500 uppercase">
+          {error || "Patient Record Not Found"}
+        </h2>
         <Link href="/senior-doctor/dashboard">
           <Button variant="secondary">Return to Dashboard</Button>
         </Link>
@@ -51,17 +94,59 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
     );
   }
 
-  const handleSaveFollowUp = (timeframe: "3" | "7" | "14" | "30" | "custom", instructions: string, customDays?: string) => {
+  const handleSaveFollowUp = async (timeframe: "3" | "7" | "14" | "30" | "custom", instructions: string, customDays?: string) => {
     saveFollowUp(patientId, timeframe, instructions, customDays);
+    if (!patient || !patient.encounterId) return;
+    try {
+      const rx = prescriptions[patientId] || { medications: [] };
+      let days = 7;
+      if (timeframe === "3") days = 3;
+      else if (timeframe === "7") days = 7;
+      else if (timeframe === "14") days = 14;
+      else if (timeframe === "30") days = 30;
+      else if (timeframe === "custom" && customDays) days = Number(customDays) || 7;
+
+      const dateObj = new Date();
+      dateObj.setDate(dateObj.getDate() + days);
+      const followupDateStr = dateObj.toISOString().split("T")[0];
+
+      const res = await savePrescriptionDraft(
+        patient.encounterId,
+        rx.medications,
+        instructions,
+        followupDateStr
+      );
+
+      if (res?.success && res?.data) {
+        useSeniorDoctorStore.setState((state) => ({
+          prescriptions: {
+            ...state.prescriptions,
+            [patientId]: {
+              ...state.prescriptions[patientId],
+              dbId: res.data.id
+            }
+          }
+        }));
+      }
+    } catch (err: unknown) {
+      const e = err as Error;
+      alert(e.message || "Failed to save follow-up details to backend.");
+    }
   };
 
-  const handleCompleteSignoff = () => {
-    setCompleting(true);
-    setTimeout(() => {
+  const handleCompleteSignoff = async () => {
+    if (!patient || !patient.encounterId) return;
+    try {
+      setCompleting(true);
+      await completeConsultationApi(patient.encounterId);
       completeConsultation(patientId);
-      setCompleting(false);
       setSuccess(true);
-    }, 1200);
+    } catch (err: unknown) {
+      const e = err as Error;
+      alert(e.message || "Failed to complete consultation sign-off.");
+    } finally {
+      setCompleting(false);
+    }
   };
 
   // Signoff Checklist Validations
