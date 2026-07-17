@@ -1,30 +1,98 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { 
   Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell 
 } from "@/components/ui/Table";
+import { Alert } from "@/components/ui/Alert";
+import { Spinner } from "@/components/ui/LoadingState";
+import apiClient from "@/services/apiClient";
 
-// Mock initial data
-const initialQueue = [
-  { id: 1, token: 101, code: "MM-2026-00045", name: "Ramesh Sharma", age: 45, gender: "Male", doctor: "Dr. Alok Verma (ENT)", status: "Waiting", triage: "amber" },
-  { id: 2, token: 102, code: "MM-2026-00052", name: "Sunita Gupta", age: 38, gender: "Female", doctor: "Dr. Neha Shah (Otology)", status: "In Consultation", triage: "green" },
-  { id: 3, token: 103, code: "MM-2026-00061", name: "Kabir Mehra", age: 29, gender: "Male", doctor: "Dr. Alok Verma (ENT)", status: "Waiting", triage: "red" },
-  { id: 4, token: 104, code: "MM-2026-00072", name: "Ananya Deshmukh", age: 12, gender: "Female", doctor: "Dr. Neha Shah (Otology)", status: "Completed", triage: "green" },
-  { id: 5, token: 105, code: "MM-2026-00084", name: "William D'Souza", age: 61, gender: "Male", doctor: "Dr. Alok Verma (ENT)", status: "Waiting", triage: "maroon" },
-];
+interface QueueEntry {
+  id: number;
+  token: number;
+  code: string;
+  name: string;
+  age: number | string;
+  gender: string;
+  doctor: string;
+  status: string;
+  triage: string;
+}
+
+interface AppointmentRecord {
+  id: number;
+  slot_token: number;
+  patient_id: number;
+  patient?: { code?: string; name?: string; age?: number; gender?: string };
+  status: string;
+  triage_level?: string;
+}
 
 export default function ReceptionDashboard() {
-  const [queue, setQueue] = useState(initialQueue);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<number>(1);
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [filter, setFilter] = useState("All");
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
 
-  const sendToDoctor = (id: number) => {
-    setQueue(prev =>
-      prev.map(p => (p.id === id ? { ...p, status: "In Consultation" } : p))
-    );
+  const fetchQueue = async (doctorId: number) => {
+    setIsLoading(true);
+    setErrorMsg("");
+    try {
+      const res = await apiClient.get("/appointments/queue", {
+        params: { doctor_id: doctorId }
+      });
+      const data = res.data;
+      if (data.success && Array.isArray(data.data)) {
+        // Map backend appointments to the UI format
+        const mappedQueue = data.data.map((appt: AppointmentRecord) => {
+          let uiStatus = "Waiting";
+          if (appt.status === "in_consultation") uiStatus = "In Consultation";
+          if (appt.status === "completed") uiStatus = "Completed";
+          if (appt.status === "cancelled") uiStatus = "Cancelled";
+
+          return {
+            id: appt.id,
+            token: appt.slot_token,
+            code: appt.patient?.code || `MM-2026-${String(appt.patient_id).padStart(5, "0")}`,
+            name: appt.patient?.name || "Unknown Patient",
+            age: appt.patient?.age || "--",
+            gender: appt.patient?.gender || "Other",
+            doctor: doctorId === 1 ? "Dr. Alok Verma (ENT)" : "Dr. Neha Shah (Otology)",
+            status: uiStatus,
+            triage: appt.triage_level || "green"
+          };
+        });
+        setQueue(mappedQueue);
+      }
+    } catch (err: unknown) {
+      console.error(err);
+      const e = err as { response?: { data?: { message?: string } }; message?: string };
+      setErrorMsg(e.response?.data?.message || e.message || "Failed to load clinic queue.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchQueue(selectedDoctorId);
+  }, [selectedDoctorId]);
+
+  const sendToDoctor = async (id: number) => {
+    try {
+      await apiClient.patch(`/appointments/${id}/status`, {
+        status: "in_consultation"
+      });
+      fetchQueue(selectedDoctorId);
+    } catch (err: unknown) {
+      console.error(err);
+      const e = err as { response?: { data?: { message?: string } }; message?: string };
+      alert(e.response?.data?.message || e.message || "Failed to initiate consultation.");
+    }
   };
 
   const filteredQueue = filter === "All" 
@@ -60,7 +128,35 @@ export default function ReceptionDashboard() {
         </div>
       </div>
 
-      {/* KPI Stats Cards - Swiss layout */}
+      {/* Doctor Selector Card */}
+      <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center bg-gray-50 border border-gray-300 p-4 rounded-[4px]">
+        <div className="flex items-center gap-3">
+          <span className="inline-block w-2.5 h-2.5 rounded-full bg-clinical-blue animate-pulse" />
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+            Consultation Queue Monitor
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Queue:</span>
+          <select
+            value={selectedDoctorId}
+            onChange={(e) => setSelectedDoctorId(parseInt(e.target.value, 10))}
+            className="bg-white border border-gray-300 text-xs font-bold uppercase rounded p-2 focus:outline-none focus:border-clinical-blue tracking-wider"
+          >
+            <option value="1">Dr. Alok Verma (ENT Spec. - General)</option>
+            <option value="2">Dr. Neha Shah (Otology Spec. - Ear)</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Error Message Banner */}
+      {errorMsg && (
+        <Alert type="error" titleText="Queue Query Failure">
+          {errorMsg}
+        </Alert>
+      )}
+
+      {/* KPI Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card className="border border-gray-300">
           <div className="space-y-2">
@@ -108,106 +204,115 @@ export default function ReceptionDashboard() {
       </div>
 
       {/* Main Queue Management Section */}
-      <div className="space-y-4">
-        {/* Table Filter Controls */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 pb-3 gap-4">
-          <h3 className="font-bold text-base text-gray-600 uppercase tracking-wider">
-            Patient Consultation Queue
-          </h3>
-          <div className="flex bg-gray-100 p-1 rounded border border-gray-200 text-xs font-semibold">
-            {["All", "Waiting", "In Consultation", "Completed"].map(status => (
-              <button
-                key={status}
-                onClick={() => setFilter(status)}
-                className={`px-4 py-2 rounded text-[11px] font-bold uppercase tracking-wider transition-all duration-150 ${
-                  filter === status 
-                    ? "bg-white text-clinical-blue" 
-                    : "text-gray-500 hover:text-gray-600"
-                }`}
-              >
-                {status}
-              </button>
-            ))}
-          </div>
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-12 space-y-4">
+          <Spinner />
+          <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+            Fetching latest queue sorting from clinic core...
+          </span>
         </div>
-
-        {/* Patient Table */}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHeaderCell className="w-[100px]">Token</TableHeaderCell>
-              <TableHeaderCell className="w-[150px]">Patient ID</TableHeaderCell>
-              <TableHeaderCell>Name</TableHeaderCell>
-              <TableHeaderCell className="w-[120px]">Age/Sex</TableHeaderCell>
-              <TableHeaderCell>Assigned Doctor</TableHeaderCell>
-              <TableHeaderCell className="w-[180px]">Status</TableHeaderCell>
-              <TableHeaderCell className="text-right w-[150px]">Actions</TableHeaderCell>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredQueue.map(patient => (
-              <TableRow key={patient.id} className="group">
-                <TableCell className="font-bold text-clinical-blue">
-                  #{patient.token}
-                </TableCell>
-                <TableCell className="font-mono text-xs font-bold text-gray-500">
-                  {patient.code}
-                </TableCell>
-                <TableCell className="font-bold">
-                  <Link href={`/reception/patient/${patient.id}`} className="text-clinical-blue hover:text-clinical-blue-dark">
-                    {patient.name}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  {patient.age}Y / {patient.gender}
-                </TableCell>
-                <TableCell className="font-medium">
-                  {patient.doctor}
-                </TableCell>
-                <TableCell>
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-[4px] text-xs font-semibold uppercase tracking-wider ${
-                    patient.status === "Waiting" ? "bg-clinical-amber-light text-clinical-amber" :
-                    patient.status === "In Consultation" ? "bg-clinical-blue-light text-clinical-blue" :
-                    "bg-clinical-green-light text-clinical-green"
-                  }`}>
-                    {patient.status}
-                  </span>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-2">
-                    {patient.status === "Waiting" && (
-                      <Button
-                        onClick={() => sendToDoctor(patient.id)}
-                        variant="primary"
-                        size="sm"
-                        className="px-3 min-w-0"
-                        title="Send to Doctor"
-                      >
-                        Start Consult
-                      </Button>
-                    )}
-                    <Link href={`/reception/patient/${patient.id}`}>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="px-3 min-w-0"
-                      >
-                        Details
-                      </Button>
-                    </Link>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-
-        {filteredQueue.length === 0 && (
-          <div className="text-center py-12 text-gray-400 font-semibold border border-dashed border-gray-300 rounded-[4px] bg-white">
-            No patients match the selected filter status.
+      ) : (
+        <div className="space-y-4">
+          {/* Table Filter Controls */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 pb-3 gap-4">
+            <h3 className="font-bold text-base text-gray-600 uppercase tracking-wider">
+              Patient Consultation Queue
+            </h3>
+            <div className="flex bg-gray-100 p-1 rounded border border-gray-200 text-xs font-semibold">
+              {["All", "Waiting", "In Consultation", "Completed"].map(status => (
+                <button
+                  key={status}
+                  onClick={() => setFilter(status)}
+                  className={`px-4 py-2 rounded text-[11px] font-bold uppercase tracking-wider transition-all duration-150 ${
+                    filter === status 
+                      ? "bg-white text-clinical-blue" 
+                      : "text-gray-500 hover:text-gray-600"
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </div>
+
+          {/* Patient Table */}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell className="w-[100px]">Token</TableHeaderCell>
+                <TableHeaderCell className="w-[150px]">Patient ID</TableHeaderCell>
+                <TableHeaderCell>Name</TableHeaderCell>
+                <TableHeaderCell className="w-[120px]">Age/Sex</TableHeaderCell>
+                <TableHeaderCell>Assigned Doctor</TableHeaderCell>
+                <TableHeaderCell className="w-[180px]">Status</TableHeaderCell>
+                <TableHeaderCell className="text-right w-[150px]">Actions</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredQueue.map(patient => (
+                <TableRow key={patient.id} className="group">
+                  <TableCell className="font-bold text-clinical-blue">
+                    #{patient.token}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs font-bold text-gray-500">
+                    {patient.code}
+                  </TableCell>
+                  <TableCell className="font-bold">
+                    <Link href={`/reception/patient/${patient.id}`} className="text-clinical-blue hover:text-clinical-blue-dark">
+                      {patient.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    {patient.age}Y / {patient.gender}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    {patient.doctor}
+                  </TableCell>
+                  <TableCell>
+                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-[4px] text-xs font-semibold uppercase tracking-wider ${
+                      patient.status === "Waiting" ? "bg-clinical-amber-light text-clinical-amber" :
+                      patient.status === "In Consultation" ? "bg-clinical-blue-light text-clinical-blue" :
+                      "bg-clinical-green-light text-clinical-green"
+                    }`}>
+                      {patient.status}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      {patient.status === "Waiting" && (
+                        <Button
+                          onClick={() => sendToDoctor(patient.id)}
+                          variant="primary"
+                          size="sm"
+                          className="px-3 min-w-0"
+                          title="Send to Doctor"
+                        >
+                          Start Consult
+                        </Button>
+                      )}
+                      <Link href={`/reception/patient/${patient.id}`}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="px-3 min-w-0"
+                        >
+                          Details
+                        </Button>
+                      </Link>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+
+          {filteredQueue.length === 0 && (
+            <div className="text-center py-12 text-gray-400 font-semibold border border-dashed border-gray-300 rounded-[4px] bg-white">
+              No patients match the selected filter status.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
