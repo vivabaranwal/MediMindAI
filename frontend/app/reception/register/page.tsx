@@ -5,11 +5,14 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as zod from "zod";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import apiClient from "@/services/apiClient";
 
 // Validation schema
 const registerSchema = zod.object({
@@ -27,10 +30,25 @@ const registerSchema = zod.object({
   doctor_id: zod.string().min(1, "Please assign a doctor"),
 });
 
+interface RegisterFormData {
+  name: string;
+  dob: string;
+  gender: string;
+  mobile: string;
+  email?: string;
+  address?: string;
+  blood_group?: string;
+  abha_id?: string;
+  emergency_name: string;
+  emergency_mobile: string;
+  consent: boolean;
+  doctor_id: string;
+}
+
 export default function RegisterPatient() {
   const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [createdCode, setCreatedCode] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const router = useRouter();
 
   const {
     register,
@@ -54,56 +72,60 @@ export default function RegisterPatient() {
     },
   });
 
-  const onSubmit = async () => {
+
+  const onSubmit = async (data: RegisterFormData) => {
     setIsLoading(true);
+    setErrorMsg("");
     try {
-      // Simulate API registration delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      // Generate a mock patient code
-      const code = `MM-2026-${Math.floor(10000 + Math.random() * 90000)}`;
-      setCreatedCode(code);
-      setIsSuccess(true);
-    } catch (err) {
+      // Calculate age from Date of Birth
+      const dobDate = new Date(data.dob);
+      const age = new Date().getFullYear() - dobDate.getFullYear();
+
+      // 1. Register Patient via Laravel endpoint StorePatientRequest DTO
+      const patientResponse = await apiClient.post("/patients", {
+        name: data.name,
+        date_of_birth: data.dob,
+        age: isNaN(age) ? null : age,
+        gender: data.gender,
+        mobile: data.mobile,
+        email: data.email || null,
+        address: data.address || null,
+        blood_group: data.blood_group === "Unknown" ? null : data.blood_group,
+        abha_id: data.abha_id || null,
+        emergency_contact_name: data.emergency_name || null,
+        emergency_contact_mobile: data.emergency_mobile || null,
+      });
+
+      const newPatient = patientResponse.data.data;
+      if (!newPatient || !newPatient.id) {
+        throw new Error("Patient registration did not return a valid patient ID.");
+      }
+
+      // 2. Assign Patient to Consult Queue of the Selected Doctor (Book Appointment)
+      const now = new Date();
+      const appointment_date = now.toISOString().split("T")[0];
+      const appointment_time = now.toTimeString().split(" ")[0].substring(0, 5); // Format: "HH:MM"
+
+      await apiClient.post("/appointments", {
+        patient_id: newPatient.id,
+        doctor_id: parseInt(data.doctor_id, 10),
+        appointment_date,
+        appointment_time,
+        type: "walk_in",
+        triage_level: "green",
+        chief_complaint: "General Walk-in Consultation",
+      });
+
+      // Navigate to Reception Dashboard queue instead of hanging on mock success screen
+      router.push("/reception");
+    } catch (err: unknown) {
       console.error(err);
+      const e = err as { response?: { data?: { message?: string } }; message?: string };
+      setErrorMsg(e.response?.data?.message || e.message || "Failed to register patient and schedule consultation.");
     } finally {
       setIsLoading(false);
     }
   };
-
-  if (isSuccess) {
-    return (
-      <div className="max-w-xl mx-auto py-12">
-        <Card className="border border-gray-300 p-8 text-center space-y-6">
-          <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-gray-650 uppercase tracking-tight">
-              Patient Registered
-            </h2>
-            <p className="text-sm text-gray-400">
-              The patient has been added to the consultation queue.
-            </p>
-          </div>
-
-          <div className="bg-gray-100 p-6 rounded border border-gray-200 max-w-sm mx-auto">
-            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block mb-1">
-              Patient Registry Code
-            </span>
-            <span className="text-2xl font-extrabold text-clinical-blue tracking-wider font-mono">
-              {createdCode}
-            </span>
-          </div>
-
-          <div className="flex justify-center gap-4 pt-4">
-            <Link href="/reception">
-              <Button variant="secondary">Back to Dashboard</Button>
-            </Link>
-            <Button variant="primary" onClick={() => setIsSuccess(false)}>
-              Register Another
-            </Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -126,6 +148,11 @@ export default function RegisterPatient() {
 
       <Card className="border border-gray-300 p-8">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+          {errorMsg && (
+            <Alert type="error" titleText="Intake Processing Failed">
+              {errorMsg}
+            </Alert>
+          )}
           
           {/* Section 1: Demographics */}
           <div className="space-y-6">
@@ -213,7 +240,7 @@ export default function RegisterPatient() {
 
           {/* Section 2: Emergency Contact */}
           <div className="space-y-6">
-            <div className="text-sm font-bold text-gray-600 uppercase tracking-wider border-b border-gray-250 pb-2">
+            <div className="text-sm font-bold text-gray-650 uppercase tracking-wider border-b border-gray-250 pb-2">
               2. Emergency Contacts
             </div>
 
@@ -239,7 +266,7 @@ export default function RegisterPatient() {
 
           {/* Section 3: Queue Assignment */}
           <div className="space-y-6">
-            <div className="text-sm font-bold text-gray-600 uppercase tracking-wider border-b border-gray-250 pb-2">
+            <div className="text-sm font-bold text-gray-650 uppercase tracking-wider border-b border-gray-250 pb-2">
               3. Consult Queue Assignment
             </div>
 
