@@ -1,15 +1,48 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useJuniorDoctorStore } from "@/store/juniorDoctorStore";
+import { useAuthStore } from "@/store/authStore";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@/components/ui/Table";
 import { RiskBadge } from "@/components/junior-doctor/RiskBadge";
+import { Spinner } from "@/components/ui/LoadingState";
 
 export default function JuniorDoctorDashboard() {
-  const { patients, casesSentToSenior } = useJuniorDoctorStore();
+  const { patients, fetchQueue, casesSentToSenior } = useJuniorDoctorStore();
+  const { user, initialize } = useAuthStore();
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      const doctorId = (user?.email === "doctor2@medimind.ai" || user?.id === 4) ? 2 : 1;
+      console.log(`[Dashboard Page] Triggering loadData for doctor ID: ${doctorId}, current user:`, user);
+      await fetchQueue(doctorId);
+      setIsLoading(false);
+    };
+    loadData();
+  }, [user, fetchQueue]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading Resident Dashboard...
+        </span>
+      </div>
+    );
+  }
+
+  // Display all daily queue patients and filter correctly
+  console.log("[Dashboard Page] Rendered patients queue from store:", patients);
 
   const waitingPatients = patients.filter((p) => p.status === "Waiting");
   const activePatients = patients.filter((p) => p.status === "In Assessment");

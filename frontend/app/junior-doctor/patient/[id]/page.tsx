@@ -1,14 +1,16 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useJuniorDoctorStore } from "@/store/juniorDoctorStore";
+import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/junior-doctor/PatientHeader";
 import { AssessmentTimeline } from "@/components/junior-doctor/AssessmentTimeline";
 import { AssessmentWorkspace } from "@/components/junior-doctor/AssessmentWorkspace";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 
 interface PatientDetailsPageProps {
   params: {
@@ -22,6 +24,17 @@ export default function PatientDetailsPage({ params }: PatientDetailsPageProps) 
   const patientId = Number(params.id);
   const patient = patients.find((p) => p.id === patientId);
   const assessment = assessments[patientId];
+
+  // Senior Doctor store — for post-sign visibility
+  const { soapNotes, prescriptions } = useSeniorDoctorStore();
+  const soapNote = soapNotes[patientId];
+  const prescription = prescriptions[patientId];
+  const soapApproved = soapNote?.status === "approved";
+  const rxApproved = prescription?.status === "approved";
+
+  // Modal state for signed records
+  const [showSoap, setShowSoap] = useState(false);
+  const [showRx, setShowRx] = useState(false);
 
   if (!patient) {
     return (
@@ -39,8 +52,14 @@ export default function PatientDetailsPage({ params }: PatientDetailsPageProps) 
     if (patient.status === "Completed") {
       router.push(`/junior-doctor/patient/${patient.id}/summary`);
     } else if (patient.status === "In Assessment") {
-      // Check if they already have questions generated, if so go straight to questions page
-      if (assessment && assessment.questions.length > 0) {
+      // Only skip Intake if we have a live assessment that belongs to this
+      // exact appointment — not a stale mock with a colliding patient id.
+      const hasLiveQuestions =
+        assessment &&
+        assessment.questions.length > 0 &&
+        assessment.appointmentId === patient.appointmentId;
+
+      if (hasLiveQuestions) {
         router.push(`/junior-doctor/patient/${patient.id}/questions`);
       } else {
         router.push(`/junior-doctor/patient/${patient.id}/assessment`);
@@ -57,13 +76,25 @@ export default function PatientDetailsPage({ params }: PatientDetailsPageProps) 
         patient={patient}
         backHref="/junior-doctor/dashboard"
         actionButton={
-          <Button variant="primary" size="md" onClick={handleAssessmentAction} className="font-bold tracking-wider">
-            {patient.status === "Completed"
-              ? "VIEW CASE SUMMARY"
-              : patient.status === "In Assessment"
-              ? "RESUME CLINICAL INTAKE"
-              : "START CLINICAL INTAKE"}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="primary" size="md" onClick={handleAssessmentAction} className="font-bold tracking-wider">
+              {patient.status === "Completed"
+                ? "VIEW CASE SUMMARY"
+                : patient.status === "In Assessment"
+                ? "RESUME CLINICAL INTAKE"
+                : "START CLINICAL INTAKE"}
+            </Button>
+            {soapApproved && (
+              <Button variant="secondary" size="md" onClick={() => setShowSoap(true)} className="font-bold tracking-wider text-xs">
+                📄 SOAP Note
+              </Button>
+            )}
+            {rxApproved && (
+              <Button variant="secondary" size="md" onClick={() => setShowRx(true)} className="font-bold tracking-wider text-xs">
+                💊 Prescription
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -166,6 +197,40 @@ export default function PatientDetailsPage({ params }: PatientDetailsPageProps) 
           </Card>
         </div>
       </AssessmentWorkspace>
+
+      {/* SOAP Note Modal */}
+      <Modal isOpen={showSoap} onClose={() => setShowSoap(false)} titleText="Signed SOAP Note">
+        {soapNote && (
+          <div className="space-y-4 text-xs text-gray-650 text-left">
+            {(["subjective", "objective", "assessment", "plan"] as const).map((field) => (
+              <div key={field} className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">{field}</span>
+                <p className="leading-relaxed bg-gray-50 border border-gray-200 p-3 rounded font-normal normal-case">
+                  {soapNote[field] || "—"}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* Prescription Modal */}
+      <Modal isOpen={showRx} onClose={() => setShowRx(false)} titleText="Signed Prescription">
+        {prescription && (
+          <div className="space-y-3 text-xs text-gray-650 text-left">
+            <p className="font-bold uppercase text-[10px] text-gray-400 tracking-wider">
+              Diagnosis: <span className="text-gray-600 font-bold">{prescription.selectedDiagnosis}</span>
+            </p>
+            {prescription.medications.map((med) => (
+              <div key={med.id} className="bg-gray-50 border border-gray-200 p-3 rounded space-y-1">
+                <span className="font-bold text-gray-650 block">{med.name}</span>
+                <span className="text-gray-500 normal-case font-normal">{med.dosage} — {med.frequency} — {med.duration}</span>
+                <span className="text-gray-400 normal-case text-[10px] block">{med.instructions}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

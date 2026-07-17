@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useJuniorDoctorStore, mockDoctors } from "@/store/juniorDoctorStore";
 import { PatientHeader } from "@/components/junior-doctor/PatientHeader";
 import { AssessmentWorkspace } from "@/components/junior-doctor/AssessmentWorkspace";
@@ -18,6 +19,7 @@ interface SummaryPageProps {
 }
 
 export default function SummaryPage({ params }: SummaryPageProps) {
+  const router = useRouter();
   const { patients, assessments, sendToSenior } = useJuniorDoctorStore();
   const patientId = Number(params.id);
   const patient = patients.find((p) => p.id === patientId);
@@ -46,8 +48,14 @@ export default function SummaryPage({ params }: SummaryPageProps) {
     });
   };
 
-  const handleSendToSenior = (doctorId: string) => {
-    sendToSenior(patientId, doctorId);
+  const handleSendToSenior = async (doctorId: string) => {
+    try {
+      await sendToSenior(patientId, doctorId);
+      router.push("/junior-doctor/queue");
+    } catch (err) {
+      console.error("Specialist handoff failed:", err);
+      alert("Handoff failed. Please check network/database logs.");
+    }
   };
 
   const isSent = patient.status === "Completed";
