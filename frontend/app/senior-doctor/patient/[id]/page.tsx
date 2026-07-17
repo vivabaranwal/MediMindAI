@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
@@ -8,6 +8,7 @@ import { PatientContextPanel } from "@/components/senior-doctor/PatientContextPa
 import { ClinicalTimeline } from "@/components/senior-doctor/ClinicalTimeline";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/LoadingState";
 
 interface PatientDetailsPageProps {
   params: {
@@ -16,18 +17,58 @@ interface PatientDetailsPageProps {
 }
 
 export default function PatientDetailsPage({ params }: PatientDetailsPageProps) {
-  const { patients, soapNotes, prescriptions, followups } = useSeniorDoctorStore();
+  const { patients, soapNotes, prescriptions, followups, loadEncounterForPatient } = useSeniorDoctorStore();
   const patientId = Number(params.id);
-  const patient = patients.find((p) => p.id === patientId);
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        await loadEncounterForPatient(patientId);
+      } catch (err: unknown) {
+        if (active) {
+          const e = err as Error;
+          setError(e.message || "Failed to load patient record.");
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [patientId, loadEncounterForPatient]);
+
+  const patient = patients.find((p) => p.id === patientId);
   const soapNote = soapNotes[patientId];
   const prescription = prescriptions[patientId];
   const followup = followups[patientId];
 
-  if (!patient) {
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading Patient Record...
+        </span>
+      </div>
+    );
+  }
+
+  if (error || !patient) {
     return (
       <div className="text-center py-16 space-y-4">
-        <h2 className="text-xl font-bold text-gray-500 uppercase">Patient Record Not Found</h2>
+        <h2 className="text-xl font-bold text-gray-500 uppercase">
+          {error || "Patient Record Not Found"}
+        </h2>
         <Link href="/senior-doctor/dashboard">
           <Button variant="secondary">Return to Dashboard</Button>
         </Link>

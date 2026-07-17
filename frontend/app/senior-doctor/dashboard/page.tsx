@@ -1,15 +1,34 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
+import { useAuthStore } from "@/store/authStore";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@/components/ui/Table";
 import { RiskBadge } from "@/components/senior-doctor/RiskBadge";
+import { Spinner } from "@/components/ui/LoadingState";
 
 export default function SeniorDoctorDashboard() {
-  const { patients } = useSeniorDoctorStore();
+  const { patients, fetchDashboardData } = useSeniorDoctorStore();
+  const { user, initialize } = useAuthStore();
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      const doctorId = (user?.email === "doctor2@medimind.ai" || user?.id === 4) ? 2 : 1;
+      await fetchDashboardData(doctorId);
+      setIsLoading(false);
+    };
+
+    loadData();
+  }, [user, fetchDashboardData]);
 
   const waitingList = patients.filter((p) => p.status === "Waiting");
   const reviewList = patients.filter((p) => p.status === "In Review");
@@ -17,6 +36,17 @@ export default function SeniorDoctorDashboard() {
   const urgentList = patients.filter(
     (p) => p.status !== "Completed" && (p.acuity === "high acuity" || p.acuity === "emergent acuity")
   );
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading clinical dashboard queue...
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 animate-fade-in-up">
