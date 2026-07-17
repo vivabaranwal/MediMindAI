@@ -20,6 +20,8 @@ export interface Patient {
     temp?: string;
     spo2?: number;
   };
+  appointmentId?: number;
+  appointmentStatus?: string;
 }
 
 export interface Question {
@@ -33,6 +35,7 @@ export interface Question {
 
 export interface Assessment {
   patientId: number;
+  appointmentId?: number; // Stamped on creation to verify ownership, prevents stale ghost data
   chiefComplaint: string;
   questions: Question[];
   currentQuestionIndex?: number;

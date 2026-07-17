@@ -12,6 +12,8 @@ export default function AdminLayout({
 
   const navigation = [
     { name: "SYSTEM OVERVIEW", href: "/admin" },
+    { name: "CLINIC ANALYTICS", href: "/admin/analytics" },
+    { name: "STAFF MANAGEMENT", href: "/admin/staff" },
   ];
 
   return (

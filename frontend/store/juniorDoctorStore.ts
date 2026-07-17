@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import apiClient from "@/services/apiClient";
 import { Patient, Question, CaseSummary, Assessment, Doctor } from "@/types/junior-doctor";
 
 // Initial mock doctors list for specialist handoff selection
@@ -63,42 +64,8 @@ const initialPatients: Patient[] = [
   },
 ];
 
-const initialAssessments: Record<number, Assessment> = {
-  3: {
-    patientId: 3,
-    chiefComplaint: "Severe progressive ear pain left side for 4 days with fever",
-    status: "questioning",
-    questions: [
-      {
-        id: "q-1",
-        text: "Is there any discharge or fluid leaking from the left ear?",
-        category: "Symptoms",
-        status: "accepted",
-        answer: "Yes, a slight yellowish discharge started this morning.",
-      },
-      {
-        id: "q-2",
-        text: "Do you experience any dizziness, vertigo, or issues keeping balance?",
-        category: "Neurological",
-        status: "accepted",
-        answer: "No vertigo, but feeling slightly lightheaded from the fever.",
-      },
-      {
-        id: "q-3",
-        text: "Is there any tenderness or pain when pressing on the bone behind your left ear?",
-        category: "Red Flags",
-        status: "accepted",
-        answer: "",
-      },
-      {
-        id: "q-4",
-        text: "Have you had a recent cold, nasal congestion, or sore throat?",
-        category: "History",
-        status: "suggested",
-      },
-    ],
-  },
-};
+// No mock assessments — all assessment state is initialized empty.
+// Populated only when a Junior Doctor actively starts an intake session.
 
 interface JuniorDoctorStore {
   patients: Patient[];
@@ -113,20 +80,23 @@ interface JuniorDoctorStore {
   updateQuestionText: (patientId: number, questionId: string, text: string) => void;
   answerQuestion: (patientId: number, questionId: string, answer: string) => void;
   setSummary: (patientId: number, summary: CaseSummary) => void;
-  sendToSenior: (patientId: number, doctorId: string) => void;
+  sendToSenior: (patientId: number, doctorId: string) => Promise<void>;
+  persistAssessmentAndDispatch: (patientId: number, doctorId: string) => Promise<void>;
   resetActiveAssessment: (patientId: number) => void;
+  fetchQueue: (doctorId: number) => Promise<void>;
 }
 
-export const useJuniorDoctorStore = create<JuniorDoctorStore>((set) => ({
-  patients: initialPatients,
+export const useJuniorDoctorStore = create<JuniorDoctorStore>((set, get) => ({
+  patients: [],
   activePatientId: null,
-  assessments: initialAssessments,
+  assessments: {}, // Always starts empty; populated only from live intake sessions
   casesSentToSenior: [],
 
   selectPatient: (patientId) => set({ activePatientId: patientId }),
 
   startAssessment: (patientId, chiefComplaint, questions, vitals) =>
     set((state) => {
+      const patient = state.patients.find((p) => p.id === patientId);
       const updatedPatients = state.patients.map((p) =>
         p.id === patientId
           ? {
@@ -146,6 +116,9 @@ export const useJuniorDoctorStore = create<JuniorDoctorStore>((set) => ({
             chiefComplaint,
             status: "started",
             questions,
+            // Stamp appointmentId so redirect logic can verify this assessment
+            // belongs to the current appointment and is not stale mock data.
+            appointmentId: patient?.appointmentId,
           },
         },
       };
@@ -222,43 +195,137 @@ export const useJuniorDoctorStore = create<JuniorDoctorStore>((set) => ({
       };
     }),
 
-  sendToSenior: (patientId, doctorId) =>
-    set((state) => {
-      const doctor = mockDoctors.find((d) => d.id === doctorId);
-      const updatedPatients = state.patients.map((p) =>
-        p.id === patientId
-          ? {
-              ...p,
-              status: "Completed" as const,
-              assignedDoctor: doctor ? doctor.name : "Senior Doctor",
-            }
-          : p
-      );
+  persistAssessmentAndDispatch: async (patientId: number, doctorId: string) => {
+    const patient = get().patients.find((p) => p.id === patientId);
+    const assessment = get().assessments[patientId];
+    if (!patient || !patient.appointmentId || !assessment || !assessment.summary) {
+      console.warn("Required assessment data or patient not found in store.");
+      return;
+    }
 
-      const updatedAssessments = { ...state.assessments };
-      if (updatedAssessments[patientId]) {
-        updatedAssessments[patientId] = {
-          ...updatedAssessments[patientId],
-          sentToSeniorId: doctorId,
-        };
+    // Map the local UI state to the API validation schema
+    let triageLevel = "green";
+    if (patient.acuity === "emergent acuity") triageLevel = "red";
+    else if (patient.acuity === "high acuity") triageLevel = "amber";
+    else if (patient.acuity === "moderate acuity") triageLevel = "yellow";
+
+    const payload = {
+      triage_level: triageLevel,
+      chief_complaint: assessment.chiefComplaint || patient.chiefComplaint || "",
+      vitals: {
+        bp: patient.vitals?.bp || "120/80",
+        hr: patient.vitals?.hr || 80,
+        temp: patient.vitals?.temp || "98.6 °F",
+        spo2: patient.vitals?.spo2 || 98
+      },
+      symptoms: (assessment.questions || []).map((q) => ({
+        id: q.id,
+        text: q.text,
+        answer: q.answer || "",
+        status: q.status || "suggested"
+      })),
+      soap_note: {
+        subjective: assessment.summary?.subjective || "",
+        objective: `Vitals - BP: ${patient.vitals?.bp || "120/80"}, HR: ${patient.vitals?.hr || 80}, Temp: ${patient.vitals?.temp || "98.6 °F"}, SpO2: ${patient.vitals?.spo2 || 98}`,
+        assessment: assessment.summary?.clinicalNotes || "",
+        plan: "Patient case queued for senior specialist review."
       }
+    };
 
-      return {
-        patients: updatedPatients,
-        assessments: updatedAssessments,
-        casesSentToSenior: [
-          ...state.casesSentToSenior,
-          {
-            patientId,
-            doctorId,
-            timestamp: new Date().toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-          },
-        ],
-      };
-    }),
+    try {
+      await apiClient.post(`/appointments/${patient.appointmentId}/assessment`, payload);
+
+      set((state) => {
+        const doctor = mockDoctors.find((d) => d.id === doctorId);
+        const updatedPatients = state.patients.map((p) =>
+          p.id === patientId
+            ? {
+                ...p,
+                status: "Completed" as const,
+                assignedDoctor: doctor ? doctor.name : "Senior Doctor",
+              }
+            : p
+        );
+
+        const updatedAssessments = { ...state.assessments };
+        if (updatedAssessments[patientId]) {
+          updatedAssessments[patientId] = {
+            ...updatedAssessments[patientId],
+            sentToSeniorId: doctorId,
+          };
+        }
+
+        return {
+          patients: updatedPatients,
+          assessments: updatedAssessments,
+          casesSentToSenior: [
+            ...state.casesSentToSenior,
+            {
+              patientId,
+              doctorId,
+              timestamp: new Date().toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            },
+          ],
+        };
+      });
+    } catch (err) {
+      console.error("persistAssessmentAndDispatch error", err);
+      throw err;
+    }
+  },
+
+  sendToSenior: async (patientId, doctorId) => {
+    return get().persistAssessmentAndDispatch(patientId, doctorId);
+  },
+
+  fetchQueue: async (doctorId: number) => {
+    console.log(`[Store] fetchQueue initiated for doctorId: ${doctorId}`);
+    try {
+      const res = await apiClient.get("/appointments/queue", {
+        params: { doctor_id: doctorId },
+      });
+      console.log("[Store] fetchQueue API response data:", res.data);
+      const queue = res.data?.data || [];
+
+      const mappedPatients = queue.map((appt: any) => {
+        const patientData = appt.patient || {};
+        
+        let acuity: any = "low acuity";
+        if (appt.triage_level === "red") acuity = "emergent acuity";
+        else if (appt.triage_level === "amber" || appt.triage_level === "orange") acuity = "high acuity";
+        else if (appt.triage_level === "yellow") acuity = "moderate acuity";
+
+        let status: any = "Waiting";
+        if (appt.status === "in_consultation") status = "In Assessment";
+        else if (appt.status === "in_queue") status = "Completed";
+
+        return {
+          id: patientData.id || appt.patient_id,
+          token: appt.slot_token || 0,
+          code: patientData.code || `MM-2026-${String(patientData.id || appt.patient_id).padStart(5, "0")}`,
+          name: patientData.name || "Unknown Patient",
+          age: patientData.age || 0,
+          gender: patientData.gender || "Other",
+          status,
+          acuity,
+          chiefComplaint: appt.chief_complaint || "",
+          assignedDoctor: appt.doctor_id === 2 ? "Dr. Neha Shah" : "Dr. Alok Verma",
+          vitals: appt.vitals || { bp: "", hr: undefined, temp: "", spo2: undefined },
+          appointmentId: appt.id,
+          appointmentStatus: appt.status,
+        };
+      });
+
+      // Hard-reset assessments alongside patients to eliminate any stale mock
+      // data that could cause the redirect logic to skip the Intake form.
+      set({ patients: mappedPatients, assessments: {} });
+    } catch (err) {
+      console.error("fetchQueue error", err);
+    }
+  },
 
   resetActiveAssessment: (patientId) =>
     set((state) => {

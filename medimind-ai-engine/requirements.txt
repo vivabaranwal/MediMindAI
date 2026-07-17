@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+langchain
+langgraph
+qdrant-client
+openai
+pydantic
+python-dotenv
+langchain-openai
+pydantic-settings
+PyPDF2
+tiktoken

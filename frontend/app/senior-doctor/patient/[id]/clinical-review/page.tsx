@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
+import { useSeniorDoctorStore, useSoapNoteSWR } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
 import { PatientContextPanel } from "@/components/senior-doctor/PatientContextPanel";
 import { AssessmentPanel } from "@/components/senior-doctor/AssessmentPanel";
@@ -28,6 +28,7 @@ export default function ClinicalReviewPage({ params }: ClinicalReviewPageProps) 
 
   const patientId = Number(params.id);
   const patient = patients.find((p) => p.id === patientId);
+  const { isLoading: isSoapLoading } = useSoapNoteSWR(patient?.encounterId);
   
   const assessment = assessments[patientId];
   const patientRecs = recommendations[patientId] || [];
@@ -73,9 +74,11 @@ export default function ClinicalReviewPage({ params }: ClinicalReviewPageProps) 
       {/* Main Three-Column Workspace Area */}
       <ClinicalReviewLayout
         leftColumn={<PatientContextPanel patient={patient} />}
-        centerColumn={<AssessmentPanel assessment={assessment} />}
+        centerColumn={<AssessmentPanel assessment={assessment} isLoading={isSoapLoading} />}
         rightColumn={
           <AIIntelligencePanel
+            patient={patient}
+            assessment={assessment}
             recommendations={patientRecs}
             similarCases={patientCases}
             outcomeStats={patientStats}

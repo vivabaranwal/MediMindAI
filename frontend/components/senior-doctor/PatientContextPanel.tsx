@@ -14,46 +14,6 @@ export const PatientContextPanel: React.FC<PatientContextPanelProps> = ({ patien
 
   return (
     <div className={`space-y-6 ${className}`}>
-      {/* Demographics Card */}
-      <Card titleText="PATIENT PROFILE" className="border border-gray-300">
-        <div className="space-y-3.5 text-xs font-semibold uppercase tracking-wider text-gray-650 text-left">
-          <div className="border-b border-gray-150 pb-2">
-            <span className="text-[9px] text-gray-400 block font-bold">Contact</span>
-            <span className="text-sm font-bold text-gray-600">{patient.contact || "--"}</span>
-          </div>
-          <div className="border-b border-gray-150 pb-2">
-            <span className="text-[9px] text-gray-400 block font-bold">Residential Address</span>
-            <span className="text-xs font-bold text-gray-550 normal-case leading-relaxed block">
-              {patient.address || "--"}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <span className="text-[9px] text-gray-400 block font-bold text-clinical-red">ALLERGIES</span>
-              {patient.allergies && patient.allergies.length > 0 ? (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {patient.allergies.map((a, i) => (
-                    <span key={i} className="bg-clinical-red-light text-clinical-red px-2 py-0.5 rounded text-[10px] font-bold">
-                      {a}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-gray-500">None documented</span>
-              )}
-            </div>
-            <div>
-              <span className="text-[9px] text-gray-400 block font-bold text-clinical-blue">ACTIVE RX</span>
-              <ul className="list-disc pl-4 space-y-0.5 text-gray-500 normal-case font-normal mt-1">
-                {patient.currentMedications?.map((m, i) => (
-                  <li key={i}>{m}</li>
-                )) || <li>None</li>}
-              </ul>
-            </div>
-          </div>
-        </div>
-      </Card>
-
       {/* Medical History Card */}
       <Card titleText="MEDICAL RECORD HISTORY" className="border border-gray-300">
         <div className="space-y-3 text-xs uppercase font-semibold text-gray-650 text-left">
@@ -86,6 +46,32 @@ export const PatientContextPanel: React.FC<PatientContextPanelProps> = ({ patien
             ) : (
               <span className="text-gray-450 text-[10px]">No previous consultations found in EMR.</span>
             )}
+          </div>
+
+          {/* Active RX Section */}
+          <div className="pt-3 border-t border-gray-200 grid grid-cols-2 gap-4">
+            <div>
+              <span className="text-[9px] text-gray-400 block font-bold text-clinical-red">ALLERGIES</span>
+              {patient.allergies && patient.allergies.length > 0 ? (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {patient.allergies.map((a, i) => (
+                    <span key={i} className="bg-clinical-red-light text-clinical-red px-2 py-0.5 rounded text-[10px] font-bold">
+                      {a}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-gray-500 normal-case font-normal">None documented</span>
+              )}
+            </div>
+            <div>
+              <span className="text-[9px] text-gray-400 block font-bold text-clinical-blue">ACTIVE RX</span>
+              <ul className="list-disc pl-4 space-y-0.5 text-gray-500 normal-case font-normal mt-1">
+                {patient.currentMedications && patient.currentMedications.length > 0
+                  ? patient.currentMedications.map((m, i) => <li key={i}>{m}</li>)
+                  : <li>None</li>}
+              </ul>
+            </div>
           </div>
         </div>
       </Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
@@ -8,6 +8,8 @@ import { PrescriptionBuilder } from "@/components/senior-doctor/PrescriptionBuil
 import { DoctorBriefCard } from "@/components/senior-doctor/DoctorBriefCard";
 import { ClinicalTimeline } from "@/components/senior-doctor/ClinicalTimeline";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/LoadingState";
+import { PrescriptionMedication } from "@/types/senior-doctor";
 
 interface PrescriptionPageProps {
   params: {
@@ -26,12 +28,43 @@ export default function PrescriptionPage({ params }: PrescriptionPageProps) {
     approvePrescription,
     soapNotes,
     followups,
+    loadEncounterForPatient,
+    savePrescriptionDraft,
+    approvePrescriptionApi,
   } = useSeniorDoctorStore();
 
   const patientId = Number(params.id);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        await loadEncounterForPatient(patientId);
+      } catch (err: unknown) {
+        if (active) {
+          const e = err as Error;
+          setError(e.message || "Failed to load patient and prescription details.");
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [patientId, loadEncounterForPatient]);
+
   const patient = patients.find((p) => p.id === patientId);
   const assessment = assessments[patientId];
-  const patientRecs = recommendations[patientId] || [];
+  const recommendationsState = recommendations[patientId];
+  const patientRecs = useMemo(() => recommendationsState || [], [recommendationsState]);
 
   const soapNote = soapNotes[patientId];
   const prescription = prescriptions[patientId] || {
@@ -44,13 +77,11 @@ export default function PrescriptionPage({ params }: PrescriptionPageProps) {
 
   // Pre-populate suggested medications if the prescription list is empty to assist workflow
   useEffect(() => {
-    if (patient && (!prescriptions[patientId] || prescriptions[patientId].medications.length === 0)) {
-      // Find medication recommendations
+    if (!isLoading && patient && (!prescriptions[patientId] || prescriptions[patientId].medications.length === 0)) {
       const medRecs = patientRecs.filter(r => r.type === "medication");
       if (medRecs.length > 0) {
-        // Pre-initialize with the first recommended med
         const rec = medRecs[0];
-        addMedication(patientId, {
+        const newMed = {
           id: `med-auto-${Date.now()}`,
           name: rec.title,
           dosage: "500 mg",
@@ -58,16 +89,110 @@ export default function PrescriptionPage({ params }: PrescriptionPageProps) {
           duration: "7 Days",
           instructions: "Post Meals",
           alerts: [],
-        });
+        };
+        addMedication(patientId, newMed);
+        if (patient.encounterId) {
+          savePrescriptionDraft(patient.encounterId, [newMed]).then((res) => {
+            if (res?.success && res?.data) {
+              useSeniorDoctorStore.setState((state) => ({
+                prescriptions: {
+                  ...state.prescriptions,
+                  [patientId]: {
+                    ...state.prescriptions[patientId],
+                    dbId: res.data.id
+                  }
+                }
+              }));
+            }
+          });
+        }
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patient, patientId]);
+  }, [isLoading, patient, patientId, patientRecs, addMedication, savePrescriptionDraft, prescriptions]);
 
-  if (!patient) {
+  const handleAddMedication = async (med: PrescriptionMedication) => {
+    if (!patient || !patient.encounterId) return;
+    try {
+      addMedication(patientId, med);
+      const currentMedications = prescriptions[patientId]?.medications || [];
+      const updatedMedications = [...currentMedications, med];
+      const res = await savePrescriptionDraft(patient.encounterId, updatedMedications);
+      if (res?.success && res?.data) {
+        useSeniorDoctorStore.setState((state) => ({
+          prescriptions: {
+            ...state.prescriptions,
+            [patientId]: {
+              ...state.prescriptions[patientId],
+              dbId: res.data.id
+            }
+          }
+        }));
+      }
+    } catch (err: unknown) {
+      const e = err as Error;
+      alert(e.message || "Failed to save prescription draft.");
+    }
+  };
+
+  const handleRemoveMedication = async (medId: string) => {
+    if (!patient || !patient.encounterId) return;
+    try {
+      removeMedication(patientId, medId);
+      const currentMedications = prescriptions[patientId]?.medications || [];
+      const updatedMedications = currentMedications.filter(m => m.id !== medId);
+      const res = await savePrescriptionDraft(patient.encounterId, updatedMedications);
+      if (res?.success && res?.data) {
+        useSeniorDoctorStore.setState((state) => ({
+          prescriptions: {
+            ...state.prescriptions,
+            [patientId]: {
+              ...state.prescriptions[patientId],
+              dbId: res.data.id
+            }
+          }
+        }));
+      }
+    } catch (err: unknown) {
+      const e = err as Error;
+      alert(e.message || "Failed to save prescription draft.");
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!patient || !patient.encounterId) return;
+    try {
+      const rx = prescriptions[patientId];
+      if (!rx) return;
+      const resDraft = await savePrescriptionDraft(patient.encounterId, rx.medications);
+      const dbId = rx.dbId || resDraft?.data?.id;
+      if (!dbId) {
+        throw new Error("Unable to resolve prescription database ID.");
+      }
+      await approvePrescriptionApi(dbId);
+      approvePrescription(patientId);
+    } catch (err: unknown) {
+      const e = err as Error;
+      alert(e.message || "Failed to approve prescription.");
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading Prescription Builder...
+        </span>
+      </div>
+    );
+  }
+
+  if (error || !patient) {
     return (
       <div className="text-center py-16 space-y-4">
-        <h2 className="text-xl font-bold text-gray-500 uppercase">Patient Record Not Found</h2>
+        <h2 className="text-xl font-bold text-gray-500 uppercase">
+          {error || "Patient Record Not Found"}
+        </h2>
         <Link href="/senior-doctor/dashboard">
           <Button variant="secondary">Return to Dashboard</Button>
         </Link>
@@ -100,9 +225,9 @@ export default function PrescriptionPage({ params }: PrescriptionPageProps) {
           <PrescriptionBuilder
             prescription={prescription}
             patientAllergies={patient.allergies || []}
-            onAddMedication={(med) => addMedication(patientId, med)}
-            onRemoveMedication={(medId) => removeMedication(patientId, medId)}
-            onApprove={() => approvePrescription(patientId)}
+            onAddMedication={handleAddMedication}
+            onRemoveMedication={handleRemoveMedication}
+            onApprove={handleApprove}
           />
         </div>
 

@@ -44,6 +44,8 @@ export interface Patient {
   currentMedications?: string[];
   previousVisits?: PreviousVisit[];
   uploadedReports?: UploadedReport[];
+  encounterId?: number;
+  appointmentId?: number;
 }
 
 export interface QuestionAnswered {
@@ -122,6 +124,7 @@ export interface Prescription {
   selectedDiagnosis: string;
   medications: PrescriptionMedication[];
   status: "draft" | "approved";
+  dbId?: number;
 }
 
 export interface FollowUpPlan {

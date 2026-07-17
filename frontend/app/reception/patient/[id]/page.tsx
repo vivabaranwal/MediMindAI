@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
@@ -8,72 +8,198 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Select } from "@/components/ui/Select";
 import { Alert } from "@/components/ui/Alert";
+import { Modal } from "@/components/ui/Modal";
+import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
+import { Spinner } from "@/components/ui/LoadingState";
+import apiClient from "@/services/apiClient";
 
-// Mock Database of Patients
-const mockPatientsDb = {
-  "1": { id: 1, code: "MM-2026-00001", name: "Ramesh Sharma", age: 45, gender: "Male", mobile: "9876543210", email: "ramesh@domain.com", address: "Sector 4, Gomti Nagar, Lucknow", blood_group: "O+", abha_id: "12-3456-7890-12", emergency_name: "Anjali Sharma", emergency_mobile: "9876543211", consent: true },
-  "2": { id: 2, code: "MM-2026-00002", name: "Sunita Gupta", age: 38, gender: "Female", mobile: "9123456789", email: "sunita@domain.com", address: "Aliganj, Lucknow", blood_group: "B+", abha_id: "43-2109-8765-43", emergency_name: "Ramesh Gupta", emergency_mobile: "9123456780", consent: true },
-  "3": { id: 3, code: "MM-2026-00003", name: "Kabir Mehra", age: 29, gender: "Male", mobile: "9567890123", email: "kabir@domain.com", address: "Hazratganj, Lucknow", blood_group: "AB-", abha_id: "56-7890-1234-56", emergency_name: "Sanjay Mehra", emergency_mobile: "9567890124", consent: true },
-  "4": { id: 4, code: "MM-2026-00004", name: "Ananya Deshmukh", age: 12, gender: "Female", mobile: "9890123456", email: "parent.ananya@domain.com", address: "Indira Nagar, Lucknow", blood_group: "A+", abha_id: "78-9012-3456-78", emergency_name: "Rajesh Deshmukh", emergency_mobile: "9890123457", consent: true },
-  "5": { id: 5, code: "MM-2026-00005", name: "William D'Souza", age: 61, gender: "Male", mobile: "9765432109", email: "william@domain.com", address: "Mahanagar, Lucknow", blood_group: "Unknown", abha_id: "", emergency_name: "Stella D'Souza", emergency_mobile: "9765432100", consent: true },
-};
+interface PatientProfileData {
+  id: number;
+  code: string;
+  name: string;
+  age: number;
+  gender: string;
+  mobile: string;
+  email: string;
+  address: string;
+  blood_group: string;
+  abha_id: string;
+  emergency_name: string;
+  emergency_mobile: string;
+  consent: boolean;
+}
 
-// Mock Reports Database
-const initialReports = [
-  { id: 101, name: "Audiology_Report_2026.pdf", type: "Audiogram", size: "1.2 MB", uploadedAt: "2026-06-10", summary: "Moderate conductive hearing loss in left ear. Normal right ear." },
-  { id: 102, name: "CBC_BloodTest.pdf", type: "Blood Test", size: "850 KB", uploadedAt: "2026-05-15", summary: "Hemoglobin slightly low (12.5 g/dL). All other CBC counts within normal reference intervals." },
-];
+interface UploadedReportData {
+  id: number;
+  name: string;
+  type: string;
+  size: string;
+  uploadedAt: string;
+  summary: string;
+}
 
 export default function PatientProfile() {
   const params = useParams();
   const patientId = (params?.id as string) || "1";
-  
-  const patient = mockPatientsDb[patientId as keyof typeof mockPatientsDb] || mockPatientsDb["1"];
+
+  // Senior Doctor store — for post-sign visibility
+  const { soapNotes, prescriptions } = useSeniorDoctorStore();
+  const numericId = Number(patientId);
+  const soapNote = soapNotes[numericId];
+  const prescription = prescriptions[numericId];
+  const soapApproved = soapNote?.status === "approved";
+  const rxApproved = prescription?.status === "approved";
 
   // States
-  const [reports, setReports] = useState(initialReports);
+  const [patient, setPatient] = useState<PatientProfileData | null>(null);
+  const [isLoadingPatient, setIsLoadingPatient] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reports, setReports] = useState<UploadedReportData[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedType, setSelectedType] = useState("Audiogram");
   const [fileName, setFileName] = useState("");
-  
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
   const [selectedDoctor, setSelectedDoctor] = useState("");
   const [queuing, setQueuing] = useState(false);
   const [queueSuccess, setQueueSuccess] = useState(false);
 
+  // Modal state for signed records
+  const [showSoap, setShowSoap] = useState(false);
+  const [showRx, setShowRx] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const loadData = async () => {
+      try {
+        setIsLoadingPatient(true);
+        const [resPat, resRep] = await Promise.all([
+          apiClient.get(`/patients/${patientId}`),
+          apiClient.get(`/reports`, { params: { patient_id: patientId } })
+        ]);
+
+        if (active) {
+          if (resPat.data?.success && resPat.data?.data) {
+            const apiPat = resPat.data.data;
+            setPatient({
+              id: apiPat.id,
+              code: apiPat.patient_code || `MM-2026-${String(apiPat.id).padStart(5, "0")}`,
+              name: apiPat.name,
+              age: apiPat.age || 0,
+              gender: apiPat.gender || "Other",
+              mobile: apiPat.mobile || "",
+              email: apiPat.email || "",
+              address: apiPat.address || "",
+              blood_group: apiPat.blood_group || "Unknown",
+              abha_id: apiPat.abha_id || "",
+              emergency_name: apiPat.emergency_contact_name || "None",
+              emergency_mobile: apiPat.emergency_contact_mobile || "",
+              consent: true
+            });
+          }
+          if (resRep.data?.success && Array.isArray(resRep.data?.data)) {
+            const mapped = resRep.data.data.map((r: { id: number; file_name: string; report_type: string; created_at: string; ocr_summary?: string }) => {
+              let displayType = "Other Report";
+              if (r.report_type === "audiogram") displayType = "Audiogram";
+              else if (r.report_type === "blood_test") displayType = "Blood Test";
+              else if (r.report_type === "ct_scan") displayType = "CT Scan";
+              else if (r.report_type === "xray") displayType = "X-Ray";
+
+              return {
+                id: r.id,
+                name: r.file_name,
+                type: displayType,
+                size: "1.2 MB",
+                uploadedAt: new Date(r.created_at).toISOString().split("T")[0],
+                summary: r.ocr_summary || "Document registered in database. AI processing pending."
+              };
+            });
+            setReports(mapped);
+          }
+        }
+      } catch (err: unknown) {
+        console.error("Failed to load patient profile data:", err);
+        setError("Failed to load patient profile data. The record may not exist or the server is unreachable.");
+      } finally {
+        if (active) {
+          setIsLoadingPatient(false);
+        }
+      }
+    };
+    loadData();
+    return () => {
+      active = false;
+    };
+  }, [patientId]);
+
   // File Upload Handlers
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFileName(e.target.files[0].name);
+      const file = e.target.files[0];
+      setFileName(file.name);
+      setSelectedFile(file);
     }
   };
 
   const uploadReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fileName) return;
+    if (!selectedFile) return;
 
     setUploading(true);
-    setUploadProgress(0);
+    setUploadProgress(10);
 
-    // Simulate progress ticks
-    for (let p = 0; p <= 100; p += 20) {
-      setUploadProgress(p);
-      await new Promise(resolve => setTimeout(resolve, 200));
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("patient_id", patientId);
+
+      let typeCode = "other";
+      if (selectedType === "Audiogram") typeCode = "audiogram";
+      else if (selectedType === "Blood Test") typeCode = "blood_test";
+      else if (selectedType === "CT Scan") typeCode = "ct_scan";
+      else if (selectedType === "X-Ray") typeCode = "xray";
+
+      formData.append("report_type", typeCode);
+
+      setUploadProgress(30);
+
+      const res = await apiClient.post("/reports/upload", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data"
+        },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percent);
+          }
+        }
+      });
+
+      setUploadProgress(100);
+
+      if (res.data?.success && res.data?.data) {
+        const r = res.data.data;
+        const newReport = {
+          id: r.id,
+          name: r.file_name,
+          type: selectedType,
+          size: "1.4 MB",
+          uploadedAt: new Date(r.created_at).toISOString().split("T")[0],
+          summary: r.ocr_summary || "Processing completed. Document registered in database."
+        };
+        setReports(prev => [newReport, ...prev]);
+      }
+
+      setFileName("");
+      setSelectedFile(null);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } }; message?: string };
+      alert(e.response?.data?.message || e.message || "Failed to upload file.");
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
     }
-
-    const newReport = {
-      id: Math.floor(1000 + Math.random() * 9000),
-      name: fileName,
-      type: selectedType,
-      size: "1.4 MB",
-      uploadedAt: new Date().toISOString().split("T")[0],
-      summary: "Processing completed. AI Summary: Diagnostic coordinates match normal values; minor deviations in specific benchmarks."
-    };
-
-    setReports(prev => [newReport, ...prev]);
-    setUploading(false);
-    setFileName("");
-    setUploadProgress(0);
   };
 
   const deleteReport = (id: number) => {
@@ -86,13 +212,58 @@ export default function PatientProfile() {
     if (!selectedDoctor) return;
 
     setQueuing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setQueuing(false);
-    setQueueSuccess(true);
-    
-    // Clear success after 3 seconds
-    setTimeout(() => setQueueSuccess(false), 3000);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const nowTime = new Date().toTimeString().slice(0, 5); // "HH:MM"
+
+      await apiClient.post("/appointments", {
+        patient_id: Number(patientId),
+        doctor_id: Number(selectedDoctor),
+        appointment_date: today,
+        appointment_time: nowTime,
+        type: "walk_in",
+        triage_level: "green",
+        chief_complaint: "Routine Consultation",
+        notes: "Queued via Registry Dossier"
+      });
+
+      setQueueSuccess(true);
+      setTimeout(() => setQueueSuccess(false), 3000);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } }; message?: string };
+      alert(e.response?.data?.message || e.message || "Failed to dispatch patient to queue.");
+    } finally {
+      setQueuing(false);
+    }
   };
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4 max-w-md mx-auto text-center">
+        <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-650 mb-2 text-xl font-bold">
+          ⚠️
+        </div>
+        <h3 className="text-lg font-bold text-gray-800">Error Loading Patient Record</h3>
+        <p className="text-sm text-gray-500">{error}</p>
+        <Link href="/reception">
+          <Button variant="secondary" size="sm" className="mt-4">
+            Back to Registry
+          </Button>
+        </Link>
+      </div>
+    );
+  }
+
+  if (isLoadingPatient || !patient) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading Patient Profile...
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
@@ -136,8 +307,50 @@ export default function PatientProfile() {
           <div className="bg-[#F0F8F4] text-clinical-green border border-clinical-green/20 px-4 py-3 rounded-[4px] text-xs font-bold uppercase tracking-wider">
             Consent Signed (DPDP Compliant)
           </div>
+          {soapApproved && (
+            <Button variant="secondary" size="sm" onClick={() => setShowSoap(true)} className="text-xs font-bold uppercase tracking-wider">
+              📄 View SOAP Note
+            </Button>
+          )}
+          {rxApproved && (
+            <Button variant="secondary" size="sm" onClick={() => setShowRx(true)} className="text-xs font-bold uppercase tracking-wider">
+              💊 View Prescription
+            </Button>
+          )}
         </div>
       </Card>
+
+      {/* SOAP Note Modal */}
+      <Modal isOpen={showSoap} onClose={() => setShowSoap(false)} titleText="Signed SOAP Note">
+        {soapNote && (
+          <div className="space-y-4 text-xs text-gray-650 text-left">
+            {(["subjective", "objective", "assessment", "plan"] as const).map((field) => (
+              <div key={field} className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">{field}</span>
+                <p className="leading-relaxed bg-gray-50 border border-gray-200 p-3 rounded font-normal normal-case">
+                  {soapNote[field] || "—"}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* Prescription Modal */}
+      <Modal isOpen={showRx} onClose={() => setShowRx(false)} titleText="Signed Prescription">
+        {prescription && (
+          <div className="space-y-3 text-xs text-gray-650 text-left">
+            <p className="font-bold uppercase text-[10px] text-gray-400 tracking-wider">Diagnosis: <span className="text-gray-600 font-bold">{prescription.selectedDiagnosis}</span></p>
+            {prescription.medications.map((med) => (
+              <div key={med.id} className="bg-gray-50 border border-gray-200 p-3 rounded space-y-1">
+                <span className="font-bold text-gray-650 block">{med.name}</span>
+                <span className="text-gray-500 normal-case font-normal">{med.dosage} — {med.frequency} — {med.duration}</span>
+                <span className="text-gray-400 normal-case text-[10px] block">{med.instructions}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
 
       {/* Main Grid: Details vs Actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

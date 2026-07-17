@@ -2,14 +2,14 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
+import { useSeniorDoctorStore, useSoapNoteSWR } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
 import { SOAPEditor } from "@/components/senior-doctor/SOAPEditor";
 import { DoctorBriefCard } from "@/components/senior-doctor/DoctorBriefCard";
 import { ClinicalTimeline } from "@/components/senior-doctor/ClinicalTimeline";
-import { SoapService } from "@/services/soap.service";
 import { SOAPNote } from "@/types/senior-doctor";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/LoadingState";
 
 interface SoapNotePageProps {
   params: {
@@ -27,51 +27,96 @@ export default function SoapNotePage({ params }: SoapNotePageProps) {
     approveSoap,
     prescriptions,
     followups,
+    loadEncounterForPatient,
+    saveSoapDraft,
+    signSoapNote,
   } = useSeniorDoctorStore();
 
   const patientId = Number(params.id);
   const patient = patients.find((p) => p.id === patientId);
+  const { isLoading: isSoapLoading } = useSoapNoteSWR(patient?.encounterId);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        setError(null);
+        await loadEncounterForPatient(patientId);
+      } catch (err: unknown) {
+        if (active) {
+          const e = err as Error;
+          setError(e.message || "Failed to load patient and SOAP note.");
+        }
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [patientId, loadEncounterForPatient]);
+
   const assessment = assessments[patientId];
   const patientRecs = recommendations[patientId] || [];
 
-  const storeSoap = soapNotes[patientId];
+  const soap = soapNotes[patientId];
   const prescription = prescriptions[patientId];
   const followup = followups[patientId];
 
-  const [soap, setSoap] = useState<SOAPNote | null>(null);
-
-  // Initialize SOAP note from store or generate default
-  useEffect(() => {
-    if (patient) {
-      if (storeSoap) {
-        setSoap(storeSoap);
-      } else {
-        const generated = SoapService.generateDefaultSoap(patient, assessment);
-        updateSoap(patientId, generated);
-        setSoap(generated);
-      }
+  const handleSaveSoap = async (fields: Partial<SOAPNote>) => {
+    if (!patient || !patient.encounterId) return;
+    try {
+      updateSoap(patientId, fields);
+      const updatedSoap = {
+        ...soap,
+        ...fields
+      } as SOAPNote;
+      await saveSoapDraft(patient.encounterId, {
+        subjective: updatedSoap.subjective,
+        objective: updatedSoap.objective,
+        assessment: updatedSoap.assessment,
+        plan: updatedSoap.plan
+      });
+    } catch (err: unknown) {
+      const e = err as Error;
+      alert(e.message || "Failed to save SOAP note draft.");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patient, storeSoap, patientId]);
+  };
 
-  if (!patient || !soap) {
+  const handleApproveSoap = async () => {
+    if (!patient || !patient.encounterId) return;
+    try {
+      await signSoapNote(patient.encounterId);
+      approveSoap(patientId);
+    } catch (err: unknown) {
+      const e = err as Error;
+      alert(e.message || "Failed to sign SOAP note.");
+    }
+  };
+
+  if (isSoapLoading || !patient) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading SOAP Note Builder...
+        </span>
+      </div>
+    );
+  }
+
+  if (error || !patient || !soap) {
     return (
       <div className="text-center py-16 space-y-4">
-        <h2 className="text-xl font-bold text-gray-500 uppercase">Patient Record Not Found</h2>
+        <h2 className="text-xl font-bold text-gray-500 uppercase">
+          {error || "Patient SOAP Record Not Found"}
+        </h2>
         <Link href="/senior-doctor/dashboard">
           <Button variant="secondary">Return to Dashboard</Button>
         </Link>
       </div>
     );
   }
-
-  const handleSaveSoap = (fields: Partial<SOAPNote>) => {
-    updateSoap(patientId, fields);
-  };
-
-  const handleApproveSoap = () => {
-    approveSoap(patientId);
-  };
 
   return (
     <div className="space-y-8 animate-fade-in-up">

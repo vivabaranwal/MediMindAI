@@ -9,16 +9,18 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
+import { Toast } from "@/components/ui/Toast";
+import { useAuthStore } from "@/store/authStore";
 
 // Form validation schemas
 const loginSchema = zod.object({
-  mobile: zod.string().min(10, "Mobile number must be at least 10 digits").max(12, "Invalid mobile number"),
+  email: zod.string().email("Please enter a valid email address"),
   password: zod.string().min(6, "Password must be at least 6 characters"),
 });
 
 const otpSchema = zod.object({
   mobile: zod.string().min(10, "Mobile number must be at least 10 digits").max(12, "Invalid mobile number"),
-  otp: zod.string().min(4, "OTP must be at least 4 digits").max(6, "Invalid OTP"),
+  otp: zod.string().min(6, "OTP must be exactly 6 digits").max(6, "Invalid OTP"),
 });
 
 export default function ReceptionLogin() {
@@ -26,58 +28,58 @@ export default function ReceptionLogin() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [receivedOtp, setReceivedOtp] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant: "success" | "error" | "info" } | null>(null);
+  
   const router = useRouter();
+  const { loginWithPassword, sendOtp, loginWithOtp } = useAuthStore();
 
   const {
     register: registerPassword,
     handleSubmit: handlePasswordSubmit,
     formState: { errors: passwordErrors },
-    getValues: getPasswordValues,
   } = useForm({
     resolver: zodResolver(loginSchema),
-    defaultValues: { mobile: "", password: "" },
+    defaultValues: { email: "", password: "" },
   });
 
   const {
     register: registerOtp,
     handleSubmit: handleOtpSubmit,
     formState: { errors: otpErrors },
-    setValue: setOtpValue,
+    getValues: getOtpValues,
   } = useForm({
     resolver: zodResolver(otpSchema),
     defaultValues: { mobile: "", otp: "" },
   });
 
-  const onSubmitPassword = async () => {
+  const onSubmitPassword = async (data: { email: string; password: string }) => {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      // Simulate API verification delay
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      await loginWithPassword(data.email, data.password);
       router.push("/reception");
-    } catch {
-      setErrorMsg("Invalid credentials. Please verify your mobile number and password.");
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Invalid credentials. Please verify your email and password.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const onSubmitOtp = async () => {
+  const onSubmitOtp = async (data: { mobile: string; otp: string }) => {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      // Simulate API verification delay
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      await loginWithOtp(data.mobile, data.otp);
       router.push("/reception");
-    } catch {
-      setErrorMsg("Invalid OTP code. Please try again.");
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Invalid OTP code. Please try again.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const sendOtp = async () => {
-    const mobileValue = getPasswordValues("mobile");
+  const triggerSendOtp = async (mobileValue: string) => {
     if (!mobileValue || mobileValue.length < 10) {
       setErrorMsg("Please enter a valid mobile number first.");
       return;
@@ -85,19 +87,34 @@ export default function ReceptionLogin() {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      setOtpValue("mobile", mobileValue);
+      const data = await sendOtp(mobileValue) as { otp?: string };
       setOtpSent(true);
-      setLoginMode("otp");
-    } catch {
-      setErrorMsg("Failed to send OTP. Please check server status.");
+      if (data && data.otp) {
+        setReceivedOtp(String(data.otp));
+      }
+      setToast({ message: "OTP code sent to your mobile number.", variant: "success" });
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to send OTP. Please check server status.");
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleSendOtpClick = () => {
+    const mobileValue = getOtpValues("mobile");
+    triggerSendOtp(mobileValue);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      {toast && (
+        <Toast
+          messageText={toast.message}
+          variant={toast.variant}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       <div className="w-full max-w-md space-y-8">
         
         {/* Medical Brand Header */}
@@ -154,14 +171,14 @@ export default function ReceptionLogin() {
 
           {/* Forms */}
           {loginMode === "password" ? (
-            <form onSubmit={handlePasswordSubmit(onSubmitPassword)} className="space-y-6">
+            <form onSubmit={handlePasswordSubmit(onSubmitPassword)} className="space-y-6 mt-6">
               <Input
-                label="Mobile Number"
-                type="tel"
-                placeholder="Enter 10-digit mobile"
+                label="Email Address"
+                type="email"
+                placeholder="Enter email address"
                 required
-                error={passwordErrors.mobile?.message}
-                {...registerPassword("mobile")}
+                error={passwordErrors.email?.message}
+                {...registerPassword("email")}
               />
 
               <div className="space-y-2">
@@ -171,10 +188,13 @@ export default function ReceptionLogin() {
                   </span>
                   <button
                     type="button"
-                    onClick={sendOtp}
+                    onClick={() => {
+                      setLoginMode("otp");
+                      setErrorMsg("");
+                    }}
                     className="text-xs text-clinical-blue hover:text-clinical-blue-dark font-semibold uppercase tracking-wider"
                   >
-                    Send OTP instead?
+                    Use OTP instead?
                   </button>
                 </div>
                 <Input
@@ -196,15 +216,28 @@ export default function ReceptionLogin() {
               </Button>
             </form>
           ) : (
-            <form onSubmit={handleOtpSubmit(onSubmitOtp)} className="space-y-6">
-              <Input
-                label="Mobile Number"
-                type="tel"
-                placeholder="Enter 10-digit mobile"
-                required
-                error={otpErrors.mobile?.message}
-                {...registerOtp("mobile")}
-              />
+            <form onSubmit={handleOtpSubmit(onSubmitOtp)} className="space-y-6 mt-6">
+              <div className="space-y-2">
+                <div className="flex justify-between items-end">
+                  <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    Mobile Number
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSendOtpClick}
+                    className="text-xs text-clinical-blue hover:text-clinical-blue-dark font-semibold uppercase tracking-wider"
+                  >
+                    Send OTP code
+                  </button>
+                </div>
+                <Input
+                  type="tel"
+                  placeholder="Enter 10-digit mobile"
+                  required
+                  error={otpErrors.mobile?.message}
+                  {...registerOtp("mobile")}
+                />
+              </div>
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
@@ -212,7 +245,7 @@ export default function ReceptionLogin() {
                     Secure OTP Code
                   </span>
                   <span className="text-[10px] bg-gray-150 border border-gray-300 px-2 py-0.5 rounded text-gray-500 font-semibold uppercase tracking-wider">
-                    {otpSent ? "Code Sent" : "Demo code: 123456"}
+                    {receivedOtp ? `Debug: ${receivedOtp}` : (otpSent ? "Code Sent" : "Demo code: 123456")}
                   </span>
                 </div>
                 <Input
@@ -234,6 +267,19 @@ export default function ReceptionLogin() {
               </Button>
             </form>
           )}
+
+          {/* Send request to administrator button */}
+          <div className="mt-4 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setToast({ message: "Request sent to clinic administrator.", variant: "success" });
+              }}
+              className="text-xs text-clinical-blue hover:text-clinical-blue-dark font-semibold uppercase tracking-wider"
+            >
+              Send request to administrator
+            </button>
+          </div>
 
           {/* Secure Audit Label */}
           <div className="pt-6 border-t border-gray-200 mt-6 text-center">

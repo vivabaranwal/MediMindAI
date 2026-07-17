@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useAuthStore } from "@/store/authStore";
+import apiClient from "@/services/apiClient";
 
 export default function ReceptionLayout({
   children,
@@ -9,12 +12,90 @@ export default function ReceptionLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, token, logout, initialize } = useAuthStore();
+  const [stats, setStats] = useState({ queue: 0, pending: 0 });
+  const [isReady, setIsReady] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  // Initialize store from localStorage on mount
+  useEffect(() => {
+    initialize();
+    setIsReady(true);
+    setMounted(true);
+  }, [initialize]);
+
+  // Auth Guard: if initialized and no token, redirect to login
+  useEffect(() => {
+    if (isReady) {
+      const storedToken = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      if (!token && !storedToken) {
+        router.push("/reception-login");
+      }
+    }
+  }, [isReady, token, router]);
+
+  // Fetch dynamic stats for queue and pending cases
+  const fetchStats = async () => {
+    try {
+      const [res1, res2] = await Promise.all([
+        apiClient.get("/appointments/queue", { params: { doctor_id: 1 } }),
+        apiClient.get("/appointments/queue", { params: { doctor_id: 2 } }),
+      ]);
+      const list1 = res1.data?.data || [];
+      const list2 = res2.data?.data || [];
+      const allAppointments = [...list1, ...list2];
+      
+      const total = allAppointments.length;
+      const pending = allAppointments.filter(
+        (appt: { status: string }) => appt.status === "booked" || appt.status === "confirmed" || appt.status === "in_queue"
+      ).length;
+
+      setStats({ queue: total, pending });
+    } catch (err) {
+      console.error("Failed to fetch sidebar header stats:", err);
+    }
+  };
+
+  useEffect(() => {
+    // Only fetch stats if we have a token (authenticated)
+    const storedToken = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    if (token || storedToken) {
+      fetchStats();
+      // Poll stats every 30 seconds
+      const interval = setInterval(fetchStats, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [token, isReady]);
+
+  const handleLogout = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    try {
+      await logout();
+    } catch (err) {
+      console.error("Logout error", err);
+    }
+    router.push("/reception-login");
+  };
 
   const navigation = [
     { name: "DASHBOARD HUB", href: "/reception" },
     { name: "PATIENT SEARCH", href: "/reception/search" },
     { name: "REGISTER PATIENT", href: "/reception/register" },
   ];
+
+  // Prevent flash of unauthenticated content or hydration mismatch
+  if (!mounted) {
+    return null;
+  }
+
+  const storedToken = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  if (!token && !storedToken) {
+    return null;
+  }
+
+  const displayName = user?.name || "Viva Baranwal";
+  const displayRole = user?.role === "front_desk" ? "Front Desk Staff" : (user?.role || "Staff");
 
   return (
     <div className="min-h-screen bg-white text-gray-600 flex">
@@ -55,14 +136,15 @@ export default function ReceptionLayout({
         {/* User profile & Logout */}
         <div className="p-6 border-t border-gray-250 bg-gray-50/50">
           <div className="bg-white border border-gray-300 p-4 rounded-[4px] mb-4">
-            <p className="text-sm font-bold text-gray-650 truncate uppercase tracking-tight">Viva Baranwal</p>
+            <p className="text-sm font-bold text-gray-650 truncate uppercase tracking-tight">{displayName}</p>
             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">
-              Front Desk Staff
+              {displayRole}
             </p>
           </div>
 
           <Link
             href="/reception-login"
+            onClick={handleLogout}
             className="flex items-center justify-center w-full px-4 py-3 rounded-[4px] text-xs font-bold uppercase tracking-wider text-clinical-red hover:bg-clinical-red-light transition-all border border-clinical-red/20"
           >
             Sign Out
@@ -80,10 +162,10 @@ export default function ReceptionLayout({
             </h1>
             <div className="hidden sm:flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wider">
               <span className="bg-clinical-blue-light text-clinical-blue px-3 py-1 rounded-[4px]">
-                Queue: 12 Patients
+                Queue: {stats.queue} Patients
               </span>
               <span className="bg-clinical-amber-light text-clinical-amber px-3 py-1 rounded-[4px]">
-                Pending: 3 Cases
+                Pending: {stats.pending} Cases
               </span>
             </div>
           </div>

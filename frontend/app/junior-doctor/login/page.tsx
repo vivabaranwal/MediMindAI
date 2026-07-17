@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
 import { JuniorDoctorService } from "@/services/juniorDoctor.service";
+import { useAuthStore } from "@/store/authStore";
 
 export default function JuniorDoctorLogin() {
   const [employeeId, setEmployeeId] = useState("JD-9021");
@@ -22,6 +23,13 @@ export default function JuniorDoctorLogin() {
 
     try {
       await JuniorDoctorService.login(employeeId, passcode);
+      
+      // Auto-login to Laravel backend behind the scenes to retrieve a Sanctum token
+      console.log("[Login] Successful junior resident validation. Logging in to Laravel...");
+      const email = employeeId === "JD-9022" ? "doctor2@medimind.ai" : "doctor1@medimind.ai";
+      await useAuthStore.getState().loginWithPassword(email, "password123");
+      console.log("[Login] Sanctum session established. Redirecting to dashboard.");
+
       router.push("/junior-doctor/dashboard");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Invalid Employee ID or Passcode.";
