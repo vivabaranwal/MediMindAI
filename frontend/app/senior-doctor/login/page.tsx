@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
-import { SeniorDoctorService } from "@/services/seniorDoctor.service";
+import { useAuthStore } from "@/store/authStore";
 
 export default function SeniorDoctorLogin() {
-  const [employeeId, setEmployeeId] = useState("SD-1001");
-  const [password, setPassword] = useState("password");
+  const [employeeId, setEmployeeId] = useState("doctor1@medimind.ai");
+  const [password, setPassword] = useState("password123");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const router = useRouter();
@@ -21,7 +21,9 @@ export default function SeniorDoctorLogin() {
     setErrorMsg("");
 
     try {
-      await SeniorDoctorService.login(employeeId, password);
+      const email = employeeId.includes("@") ? employeeId : (employeeId === "SD-1002" ? "doctor2@medimind.ai" : "doctor1@medimind.ai");
+      const realPassword = password === "password" ? "password123" : password;
+      await useAuthStore.getState().loginWithPassword(email, realPassword);
       router.push("/senior-doctor/dashboard");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Invalid credentials.";
@@ -67,9 +69,9 @@ export default function SeniorDoctorLogin() {
 
           <form onSubmit={handleLogin} className="space-y-6">
             <Input
-              label="Consultant Employee ID"
+              label="Consultant Email / Employee ID"
               type="text"
-              placeholder="e.g. SD-1001"
+              placeholder="e.g. doctor1@medimind.ai"
               value={employeeId}
               onChange={(e) => setEmployeeId(e.target.value)}
               required

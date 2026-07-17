@@ -1,17 +1,47 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
+import { useAuthStore } from "@/store/authStore";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@/components/ui/Table";
 import { RiskBadge } from "@/components/senior-doctor/RiskBadge";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/LoadingState";
 
 type TabStatus = "All" | "Waiting" | "In Review" | "Completed";
 
 export default function QueuePage() {
-  const { patients } = useSeniorDoctorStore();
+  const { patients, fetchDashboardData } = useSeniorDoctorStore();
+  const { user, initialize } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabStatus>("All");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      const doctorId = (user?.email === "doctor2@medimind.ai" || user?.id === 4) ? 2 : 1;
+      await fetchDashboardData(doctorId);
+      setIsLoading(false);
+    };
+
+    loadData();
+  }, [user, fetchDashboardData]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading specialist queue...
+        </span>
+      </div>
+    );
+  }
 
   const filtered = activeTab === "All"
     ? patients
