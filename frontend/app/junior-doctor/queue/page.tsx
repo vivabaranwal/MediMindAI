@@ -1,21 +1,63 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useJuniorDoctorStore } from "@/store/juniorDoctorStore";
+import { useAuthStore } from "@/store/authStore";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@/components/ui/Table";
 import { RiskBadge } from "@/components/junior-doctor/RiskBadge";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/LoadingState";
 
 type FilterStatus = "All" | "Waiting" | "In Assessment" | "Completed";
 
 export default function PatientQueuePage() {
-  const { patients } = useJuniorDoctorStore();
+  const { patients, fetchQueue } = useJuniorDoctorStore();
+  const { user, initialize } = useAuthStore();
   const [activeTab, setActiveTab] = useState<FilterStatus>("All");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+
+      setIsLoading(true);
+      const doctorId = (user?.email === "doctor2@medimind.ai" || user?.id === 4) ? 2 : 1;
+      console.log(`[Queue Page] Triggering loadData for doctor ID: ${doctorId}, current user:`, user);
+      await fetchQueue(doctorId);
+      setIsLoading(false);
+    };
+    loadData();
+  }, [user, fetchQueue]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          Loading Assigned Queue...
+        </span>
+      </div>
+    );
+  }
+
+  // Display all daily queue patients and filter them appropriately via tabs
+  console.log("[Queue Page] Rendered patients queue from store:", patients);
+  const activeQueue = patients.filter(
+    (p) =>
+      p.appointmentStatus === "booked" ||
+      p.appointmentStatus === "confirmed" ||
+      p.appointmentStatus === "in_consultation" ||
+      p.appointmentStatus === "in_queue"
+  );
 
   const filteredPatients = activeTab === "All"
-    ? patients
-    : patients.filter((p) => p.status === activeTab);
+    ? activeQueue
+    : activeQueue.filter((p) => p.status === activeTab);
 
   return (
     <div className="space-y-8 animate-fade-in-up">
@@ -40,8 +82,8 @@ export default function PatientQueuePage() {
         <div className="flex bg-gray-100 p-1 rounded border border-gray-200 text-xs font-semibold">
           {(["All", "Waiting", "In Assessment", "Completed"] as FilterStatus[]).map((tab) => {
             const count = tab === "All"
-              ? patients.length
-              : patients.filter((p) => p.status === tab).length;
+              ? activeQueue.length
+              : activeQueue.filter((p) => p.status === tab).length;
 
             return (
               <button
