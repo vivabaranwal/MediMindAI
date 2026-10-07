@@ -93,15 +93,15 @@ class PrescriptionController extends Controller
         }
 
         try {
-            $approvedPrescription = $this->prescriptionService->approvePrescription($id, $doctor->id);
+            $approvedPrescription = $this->prescriptionService->approvePrescription($id, $doctor->id, $request->boolean('acknowledge_critical'));
 
             return response()->json([
                 'success' => true,
                 'message' => 'Prescription approved successfully.',
                 'data' => $approvedPrescription,
             ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            throw $e;
+        } catch (\Illuminate\Validation\ValidationException | \App\Exceptions\PrescriptionSafetyException | \Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            throw $e; // rendered as 422 (with alerts) or the intended HTTP status, not flattened
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

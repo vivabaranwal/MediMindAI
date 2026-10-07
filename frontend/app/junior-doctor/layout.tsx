@@ -1,8 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useRequireRole } from "@/hooks/useRequireRole";
+import { useAuthStore } from "@/store/authStore";
 import { useJuniorDoctorStore } from "@/store/juniorDoctorStore";
+
+const ROLE_LABELS: Record<string, string> = {
+  doctor: "Doctor",
+  super_admin: "Super Admin",
+  clinic_admin: "Clinic Admin",
+};
 
 export default function JuniorDoctorLayout({
   children,
@@ -10,12 +18,20 @@ export default function JuniorDoctorLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const isLoginPage = pathname === "/junior-doctor/login";
+  const { ready, user } = useRequireRole(["doctor", "super_admin"], "/junior-doctor/login", { skip: isLoginPage, level: "junior" });
+  const logout = useAuthStore((s) => s.logout);
+
+  const handleSignOut = async () => {
+    await logout();
+    router.replace("/junior-doctor/login");
+  };
   const { patients } = useJuniorDoctorStore();
 
   const assignedCount = patients.length;
   const inAssessmentCount = patients.filter((p) => p.status === "In Assessment").length;
 
-  const isLoginPage = pathname === "/junior-doctor/login";
 
   const navigation = [
     { name: "DASHBOARD", href: "/junior-doctor/dashboard" },
@@ -26,10 +42,14 @@ export default function JuniorDoctorLayout({
     return <div className="min-h-screen bg-white">{children}</div>;
   }
 
+  if (!ready) {
+    return <div className="min-h-screen bg-white" />;
+  }
+
   return (
-    <div className="min-h-screen bg-white text-gray-600 flex">
+    <div className="min-h-screen bg-white text-gray-600 flex print:block">
       {/* Off-white Sidebar */}
-      <aside className="w-[260px] border-r border-gray-200 bg-gray-50 flex flex-col justify-between shrink-0">
+      <aside className="print:hidden w-[260px] border-r border-gray-200 bg-gray-50 flex flex-col justify-between shrink-0">
         <div className="py-8">
           {/* Logo Section */}
           <div className="px-6 mb-12">
@@ -65,25 +85,26 @@ export default function JuniorDoctorLayout({
         {/* User profile & Logout */}
         <div className="p-6 border-t border-gray-250 bg-gray-50/50">
           <div className="bg-white border border-gray-300 p-4 rounded-[4px] mb-4">
-            <p className="text-sm font-bold text-gray-650 truncate uppercase tracking-tight">Dr. Amit Pathak</p>
+            <p className="text-sm font-bold text-gray-650 truncate uppercase tracking-tight">{user?.name}</p>
             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">
-              Junior Resident
+              {ROLE_LABELS[user?.role ?? ""] ?? user?.role}
             </p>
           </div>
 
-          <Link
-            href="/junior-doctor/login"
+          <button
+            type="button"
+            onClick={handleSignOut}
             className="flex items-center justify-center w-full px-4 py-3 rounded-[4px] text-xs font-bold uppercase tracking-wider text-clinical-red hover:bg-clinical-red-light transition-all border border-clinical-red/20"
           >
             Sign Out
-          </Link>
+          </button>
         </div>
       </aside>
 
       {/* Main Workspace Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto print:block print:overflow-visible">
         {/* Top Header Bar */}
-        <header className="h-20 border-b border-gray-200 bg-white px-8 flex items-center justify-between sticky top-0 z-40">
+        <header className="print:hidden h-20 border-b border-gray-200 bg-white px-8 flex items-center justify-between sticky top-0 z-40">
           <div className="flex items-center gap-6">
             <h1 className="text-sm font-bold text-gray-500 uppercase tracking-widest leading-none">
               Workspace Monitor

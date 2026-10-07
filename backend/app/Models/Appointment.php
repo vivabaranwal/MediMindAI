@@ -30,6 +30,9 @@ class Appointment extends Model
     ];
 
     protected $casts = [
+        'chief_complaint' => 'encrypted',
+        'notes' => 'encrypted',
+        'cancel_reason' => 'encrypted',
         'appointment_date' => 'date',
         'cancelled_at' => 'datetime',
         'completed_at' => 'datetime',

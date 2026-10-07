@@ -73,7 +73,7 @@ export const RecommendationCard: React.FC<RecommendationCardProps> = ({
             >
               {recommendation.status}
             </span>
-            <ConfidenceBadge confidence={recommendation.confidence} />
+            {recommendation.likelihood && <ConfidenceBadge likelihood={recommendation.likelihood} />}
           </div>
         </div>
 
@@ -153,7 +153,7 @@ export const RecommendationCard: React.FC<RecommendationCardProps> = ({
 
       {/* Clinical Evidence Section */}
       <div className="mt-3 pt-2.5 border-t border-gray-150/70 text-[10px] font-semibold uppercase tracking-wider text-gray-450">
-        <span className="text-gray-400 font-bold block mb-0.5">Clinical Rationale Evidence</span>
+        <span className="text-gray-400 font-bold block mb-0.5">Supporting Evidence</span>
         <p className="normal-case font-normal text-gray-500 leading-normal">
           {recommendation.evidence}
         </p>

@@ -23,6 +23,7 @@ class Diagnosis extends Model
     ];
 
     protected $casts = [
+        'notes' => 'encrypted',
         'is_ai_suggested' => 'boolean',
         'doctor_confirmed' => 'boolean',
         'ai_confidence' => 'float',

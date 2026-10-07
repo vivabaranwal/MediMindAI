@@ -25,6 +25,10 @@ class SoapNote extends Model
     ];
 
     protected $casts = [
+        'subjective' => 'encrypted',
+        'objective' => 'encrypted',
+        'assessment' => 'encrypted',
+        'plan' => 'encrypted',
         'is_ai_generated' => 'boolean',
         'doctor_signed' => 'boolean',
         'signed_at' => 'datetime',

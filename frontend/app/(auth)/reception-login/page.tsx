@@ -28,11 +28,10 @@ export default function ReceptionLogin() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [otpSent, setOtpSent] = useState(false);
-  const [receivedOtp, setReceivedOtp] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; variant: "success" | "error" | "info" } | null>(null);
   
   const router = useRouter();
-  const { loginWithPassword, sendOtp, loginWithOtp } = useAuthStore();
+  const { loginWithPassword, sendOtp, loginWithOtp, logout } = useAuthStore();
 
   const {
     register: registerPassword,
@@ -57,7 +56,7 @@ export default function ReceptionLogin() {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      await loginWithPassword(data.email, data.password);
+      await loginWithPassword(data.email, data.password, ["front_desk", "clinic_admin", "super_admin"]);
       router.push("/reception");
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Invalid credentials. Please verify your email and password.");
@@ -70,7 +69,11 @@ export default function ReceptionLogin() {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      await loginWithOtp(data.mobile, data.otp);
+      const otpUser = await loginWithOtp(data.mobile, data.otp);
+      if (!["front_desk", "clinic_admin", "super_admin"].includes(otpUser.role)) {
+        await logout();
+        throw new Error("This account does not have access to the reception portal.");
+      }
       router.push("/reception");
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Invalid OTP code. Please try again.");
@@ -87,11 +90,8 @@ export default function ReceptionLogin() {
     setIsLoading(true);
     setErrorMsg("");
     try {
-      const data = await sendOtp(mobileValue) as { otp?: string };
+      await sendOtp(mobileValue);
       setOtpSent(true);
-      if (data && data.otp) {
-        setReceivedOtp(String(data.otp));
-      }
       setToast({ message: "OTP code sent to your mobile number.", variant: "success" });
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to send OTP. Please check server status.");
@@ -245,12 +245,12 @@ export default function ReceptionLogin() {
                     Secure OTP Code
                   </span>
                   <span className="text-[10px] bg-gray-150 border border-gray-300 px-2 py-0.5 rounded text-gray-500 font-semibold uppercase tracking-wider">
-                    {receivedOtp ? `Debug: ${receivedOtp}` : (otpSent ? "Code Sent" : "Demo code: 123456")}
+                    {otpSent ? "Code Sent" : "Not Sent"}
                   </span>
                 </div>
                 <Input
                   type="text"
-                  placeholder="Enter OTP (e.g. 123456)"
+                  placeholder="Enter the 6-digit code"
                   required
                   error={otpErrors.otp?.message}
                   {...registerOtp("otp")}

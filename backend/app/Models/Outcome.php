@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\EncryptedJson;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -22,8 +23,9 @@ class Outcome extends Model
     ];
 
     protected $casts = [
-        'symptom_scores' => 'array',
-        'side_effects' => 'array',
+        'patient_notes' => 'encrypted',
+        'symptom_scores' => EncryptedJson::class,
+        'side_effects' => EncryptedJson::class,
         'fed_to_learning' => 'boolean',
         'created_at' => 'datetime',
     ];

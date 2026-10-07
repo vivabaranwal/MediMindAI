@@ -1,14 +1,15 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useSeniorDoctorStore, useSoapNoteSWR } from "@/store/seniorDoctorStore";
+import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
 import { PatientContextPanel } from "@/components/senior-doctor/PatientContextPanel";
 import { AssessmentPanel } from "@/components/senior-doctor/AssessmentPanel";
 import { AIIntelligencePanel } from "@/components/senior-doctor/AIIntelligencePanel";
 import { ClinicalReviewLayout } from "@/components/senior-doctor/ClinicalReviewLayout";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/LoadingState";
 
 interface ClinicalReviewPageProps {
   params: {
@@ -16,29 +17,58 @@ interface ClinicalReviewPageProps {
   };
 }
 
+const IDLE = { status: "idle" as const };
+
 export default function ClinicalReviewPage({ params }: ClinicalReviewPageProps) {
+  const patientId = Number(params.id);
   const {
     patients,
     assessments,
     recommendations,
-    similarCases,
-    outcomeStats,
+    ai,
     updateRecommendationStatus,
+    loadEncounterForPatient,
+    loadBrief,
+    loadSuggestions,
   } = useSeniorDoctorStore();
 
-  const patientId = Number(params.id);
-  const patient = patients.find((p) => p.id === patientId);
-  const { isLoading: isSoapLoading } = useSoapNoteSWR(patient?.encounterId);
-  
-  const assessment = assessments[patientId];
-  const patientRecs = recommendations[patientId] || [];
-  const patientCases = similarCases[patientId] || [];
-  const patientStats = outcomeStats[patientId] || [];
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!patient) {
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        await loadEncounterForPatient(patientId);
+        void loadSuggestions(patientId); // cached for the session once ready
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "Failed to load the patient record.");
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [patientId, loadEncounterForPatient, loadSuggestions]);
+
+  const patient = patients.find((p) => p.id === patientId);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Loading clinical review...</span>
+      </div>
+    );
+  }
+
+  if (error || !patient) {
     return (
       <div className="text-center py-16 space-y-4">
-        <h2 className="text-xl font-bold text-gray-500 uppercase">Patient Record Not Found</h2>
+        <h2 className="text-xl font-bold text-gray-500 uppercase">{error || "Patient Record Not Found"}</h2>
         <Link href="/senior-doctor/dashboard">
           <Button variant="secondary">Return to Dashboard</Button>
         </Link>
@@ -46,17 +76,10 @@ export default function ClinicalReviewPage({ params }: ClinicalReviewPageProps) 
     );
   }
 
-  const handleRecommendationStatusChange = (
-    recId: string,
-    status: "pending" | "accepted" | "modified" | "rejected",
-    modifiedValue?: string
-  ) => {
-    updateRecommendationStatus(patientId, recId, status, modifiedValue);
-  };
+  const state = ai[patientId];
 
   return (
     <div className="space-y-8 animate-fade-in-up">
-      {/* Patient Header Banner */}
       <PatientHeader
         patient={patient}
         backHref={`/senior-doctor/patient/${patientId}`}
@@ -71,18 +94,18 @@ export default function ClinicalReviewPage({ params }: ClinicalReviewPageProps) 
         }
       />
 
-      {/* Main Three-Column Workspace Area */}
       <ClinicalReviewLayout
         leftColumn={<PatientContextPanel patient={patient} />}
-        centerColumn={<AssessmentPanel assessment={assessment} isLoading={isSoapLoading} />}
+        centerColumn={<AssessmentPanel assessment={assessments[patientId]} />}
         rightColumn={
           <AIIntelligencePanel
             patient={patient}
-            assessment={assessment}
-            recommendations={patientRecs}
-            similarCases={patientCases}
-            outcomeStats={patientStats}
-            onRecommendationStatusChange={handleRecommendationStatusChange}
+            recommendations={recommendations[patientId] || []}
+            brief={state?.brief ?? IDLE}
+            suggestions={state?.suggestions ?? IDLE}
+            onRegenerateBrief={() => loadBrief(patientId, true)}
+            onRegenerateSuggestions={() => loadSuggestions(patientId, true)}
+            onRecommendationStatusChange={(recId, status, modified) => updateRecommendationStatus(patientId, recId, status, modified)}
           />
         }
       />

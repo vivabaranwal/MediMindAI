@@ -9,11 +9,13 @@ import { Button } from "@/components/ui/Button";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@/components/ui/Table";
 import { RiskBadge } from "@/components/junior-doctor/RiskBadge";
 import { Spinner } from "@/components/ui/LoadingState";
+import { Alert } from "@/components/ui/Alert";
 
 export default function JuniorDoctorDashboard() {
   const { patients, fetchQueue, casesSentToSenior } = useJuniorDoctorStore();
   const { user, initialize } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     initialize();
@@ -21,11 +23,21 @@ export default function JuniorDoctorDashboard() {
 
   useEffect(() => {
     const loadData = async () => {
+      if (!user) return;
+      if (!user.doctor_id) {
+        setLoadError("This account has no doctor profile, so there is no queue to show.");
+        setIsLoading(false);
+        return;
+      }
       setIsLoading(true);
-      const doctorId = (user?.email === "doctor2@medimind.ai" || user?.id === 4) ? 2 : 1;
-      console.log(`[Dashboard Page] Triggering loadData for doctor ID: ${doctorId}, current user:`, user);
-      await fetchQueue(doctorId);
-      setIsLoading(false);
+      setLoadError("");
+      try {
+        await fetchQueue(user.doctor_id);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Could not load the queue.");
+      } finally {
+        setIsLoading(false);
+      }
     };
     loadData();
   }, [user, fetchQueue]);
@@ -41,8 +53,16 @@ export default function JuniorDoctorDashboard() {
     );
   }
 
+  if (loadError) {
+    return (
+      <Alert type="error" titleText="Could not load the queue">
+        {loadError}
+      </Alert>
+    );
+  }
+
+
   // Display all daily queue patients and filter correctly
-  console.log("[Dashboard Page] Rendered patients queue from store:", patients);
 
   const waitingPatients = patients.filter((p) => p.status === "Waiting");
   const activePatients = patients.filter((p) => p.status === "In Assessment");
@@ -196,19 +216,6 @@ export default function JuniorDoctorDashboard() {
 
         {/* Right sidebar activity logs */}
         <div className="lg:col-span-4 space-y-6">
-          <Card titleText="Supervisor Directives" className="border border-gray-300">
-            <div className="space-y-4 text-xs font-semibold text-gray-650 leading-relaxed uppercase tracking-wider">
-              <div className="border-l-[3px] border-clinical-blue bg-clinical-blue-light/20 p-3 rounded-[2px]">
-                <span className="text-[10px] text-clinical-blue font-bold block mb-1">Dr. Alok Verma (Otology Specialist)</span>
-                <p className="normal-case font-normal italic">&ldquo;Ensure all pediatric otology entries note tympanic drum mobility evaluations explicitly.&rdquo;</p>
-              </div>
-              <div className="border-l-[3px] border-clinical-amber bg-clinical-amber-light/20 p-3 rounded-[2px]">
-                <span className="text-[10px] text-clinical-amber font-bold block mb-1">System Audit Flag</span>
-                <p className="normal-case font-normal italic">&ldquo;Ensure patient vitals are fully loaded from physical triage desks before compilations.&rdquo;</p>
-              </div>
-            </div>
-          </Card>
-
           <Card titleText="Recent Handoff Logs" className="border border-gray-300">
             {casesSentToSenior.length === 0 ? (
               <p className="text-xs text-gray-400 font-semibold uppercase tracking-wider text-center py-6">

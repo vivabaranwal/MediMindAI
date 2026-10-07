@@ -9,11 +9,13 @@ import { Button } from "@/components/ui/Button";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@/components/ui/Table";
 import { RiskBadge } from "@/components/senior-doctor/RiskBadge";
 import { Spinner } from "@/components/ui/LoadingState";
+import { Alert } from "@/components/ui/Alert";
 
 export default function SeniorDoctorDashboard() {
   const { patients, fetchDashboardData } = useSeniorDoctorStore();
   const { user, initialize } = useAuthStore();
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     initialize();
@@ -21,12 +23,22 @@ export default function SeniorDoctorDashboard() {
 
   useEffect(() => {
     const loadData = async () => {
+      if (!user) return;
+      if (!user.doctor_id) {
+        setLoadError("This account has no doctor profile, so there is no queue to show.");
+        setIsLoading(false);
+        return;
+      }
       setIsLoading(true);
-      const doctorId = (user?.email === "doctor2@medimind.ai" || user?.id === 4) ? 2 : 1;
-      await fetchDashboardData(doctorId);
-      setIsLoading(false);
+      setLoadError("");
+      try {
+        await fetchDashboardData(user.doctor_id);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Could not load the queue.");
+      } finally {
+        setIsLoading(false);
+      }
     };
-
     loadData();
   }, [user, fetchDashboardData]);
 
@@ -36,6 +48,7 @@ export default function SeniorDoctorDashboard() {
   const urgentList = patients.filter(
     (p) => p.status !== "Completed" && (p.acuity === "high acuity" || p.acuity === "emergent acuity")
   );
+  const withAllergies = patients.filter((p) => p.status !== "Completed" && (p.allergies?.length ?? 0) > 0);
 
   if (isLoading) {
     return (
@@ -47,6 +60,15 @@ export default function SeniorDoctorDashboard() {
       </div>
     );
   }
+
+  if (loadError) {
+    return (
+      <Alert type="error" titleText="Could not load the queue">
+        {loadError}
+      </Alert>
+    );
+  }
+
 
   return (
     <div className="space-y-8 animate-fade-in-up">
@@ -187,18 +209,31 @@ export default function SeniorDoctorDashboard() {
 
         {/* Clinical Alerts Panel (4 columns) */}
         <div className="lg:col-span-4 space-y-6">
-          <Card titleText="COHORT WARNING ALERTS" className="border border-gray-300">
-            <div className="space-y-4 text-xs font-semibold text-gray-650 leading-relaxed uppercase tracking-wider">
-              <div className="border-l-[3px] border-clinical-red bg-clinical-red-light/20 p-3 rounded-[2px]">
-                <span className="text-[10px] text-clinical-red font-bold block mb-1">Mastoiditis Alert</span>
-                <p className="normal-case font-normal italic">&ldquo;Patient William D&apos;Souza has severe mastoid opacification. Immediate surgical consult indicated.&rdquo;</p>
+          <Card titleText="NEEDS ATTENTION" className="border border-gray-300">
+            {urgentList.length === 0 && withAllergies.length === 0 ? (
+              <p className="text-xs text-gray-450 font-semibold uppercase tracking-wider text-center py-6">
+                No urgent patients or documented allergies in the current queue.
+              </p>
+            ) : (
+              <div className="space-y-4 text-xs font-semibold text-gray-650 leading-relaxed uppercase tracking-wider">
+                {urgentList.map((p) => (
+                  <div key={`urgent-${p.id}`} className="border-l-[3px] border-clinical-red bg-clinical-red-light/20 p-3 rounded-[2px]">
+                    <span className="text-[10px] text-clinical-red font-bold block mb-1">{p.acuity}</span>
+                    <p className="normal-case font-normal">
+                      {p.name}: {p.chiefComplaint || "complaint not recorded"}
+                    </p>
+                  </div>
+                ))}
+                {withAllergies.map((p) => (
+                  <div key={`allergy-${p.id}`} className="border-l-[3px] border-clinical-amber bg-clinical-amber-light/20 p-3 rounded-[2px]">
+                    <span className="text-[10px] text-clinical-amber font-bold block mb-1">Documented allergies</span>
+                    <p className="normal-case font-normal">
+                      {p.name}: {p.allergies?.join(", ")}
+                    </p>
+                  </div>
+                ))}
               </div>
-
-              <div className="border-l-[3px] border-clinical-amber bg-clinical-amber-light/20 p-3 rounded-[2px]">
-                <span className="text-[10px] text-clinical-amber font-bold block mb-1">Allergy Sensitivity warning</span>
-                <p className="normal-case font-normal italic">&ldquo;Patient Kabir Mehra is penicillin allergic. Use caution in prescribing standard augmentin regimens.&rdquo;</p>
-              </div>
-            </div>
+            )}
           </Card>
 
           <Card titleText="RECENT REVIEW LOGS" className="border border-gray-300">

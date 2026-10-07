@@ -15,6 +15,7 @@ class Doctor extends Model
         'user_id',
         'registration_number',
         'specialization',
+        'level',
         'qualification',
         'experience_years',
         'consultation_fee',
@@ -29,6 +30,9 @@ class Doctor extends Model
         'is_active' => 'boolean',
         'consultation_fee' => 'decimal:2',
     ];
+
+    public const LEVEL_JUNIOR = 'junior';
+    public const LEVEL_SENIOR = 'senior';
 
     /**
      * Get the user account associated with the doctor.

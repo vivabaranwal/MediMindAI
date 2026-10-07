@@ -36,8 +36,9 @@ return [
     ],
 
     'fastapi' => [
-        'url' => env('FASTAPI_URL', 'http://localhost:8000'),
-        'secret' => env('FASTAPI_INTERNAL_SECRET', 'secret'),
+        'url' => env('FASTAPI_URL', 'http://localhost:8080'),
+        // No default: the shared secret must be provisioned per environment.
+        'secret' => env('FASTAPI_INTERNAL_SECRET'),
     ],
 
 ];

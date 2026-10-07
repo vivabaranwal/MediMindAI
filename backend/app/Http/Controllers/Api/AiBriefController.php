@@ -8,15 +8,12 @@ use Illuminate\Http\JsonResponse;
 
 class AiBriefController extends Controller
 {
-    protected AiBriefService $aiBriefService;
-
-    public function __construct(AiBriefService $aiBriefService)
+    public function __construct(protected AiBriefService $aiBriefService)
     {
-        $this->aiBriefService = $aiBriefService;
     }
 
     /**
-     * Display AI Doctor Brief by Encounter ID.
+     * Stored AI doctor brief. 404 with code `brief_not_generated` until generated.
      */
     public function show(int $encounterId): JsonResponse
     {
@@ -25,36 +22,25 @@ class AiBriefController extends Controller
         if (!$brief) {
             return response()->json([
                 'success' => false,
-                'message' => 'AI Brief not found for this encounter.',
+                'code' => 'brief_not_generated',
+                'message' => 'No AI brief has been generated for this encounter yet.',
             ], 404);
         }
 
-        return response()->json([
-            'success' => true,
-            'data' => $brief,
-        ]);
+        return response()->json(['success' => true, 'data' => $brief]);
     }
 
     /**
-     * Trigger regeneration of the doctor brief.
+     * Generate or regenerate the brief. AI/consent failures propagate as typed errors.
      */
     public function regenerate(int $encounterId): JsonResponse
     {
-        try {
-            $brief = $this->aiBriefService->regenerateBrief($encounterId);
+        $brief = $this->aiBriefService->generate($encounterId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'AI Brief regenerated successfully.',
-                'data' => $brief,
-            ]);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            throw $e;
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], 422);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'AI brief generated.',
+            'data' => $brief,
+        ]);
     }
 }

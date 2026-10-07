@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useRequireRole } from "@/hooks/useRequireRole";
+import { useAuthStore } from "@/store/authStore";
+
+const ROLE_LABELS: Record<string, string> = {
+  doctor: "Doctor",
+  super_admin: "Super Admin",
+  clinic_admin: "Clinic Admin",
+};
 
 export default function AdminLayout({
   children,
@@ -9,12 +17,29 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const isLoginPage = pathname === "/admin/login";
+  const { ready, user } = useRequireRole(["clinic_admin", "super_admin"], "/admin/login", { skip: isLoginPage });
+  const logout = useAuthStore((s) => s.logout);
+
+  const handleSignOut = async () => {
+    await logout();
+    router.replace("/admin/login");
+  };
 
   const navigation = [
     { name: "SYSTEM OVERVIEW", href: "/admin" },
     { name: "CLINIC ANALYTICS", href: "/admin/analytics" },
     { name: "STAFF MANAGEMENT", href: "/admin/staff" },
   ];
+
+  if (isLoginPage) {
+    return <div className="min-h-screen bg-white">{children}</div>;
+  }
+
+  if (!ready) {
+    return <div className="min-h-screen bg-white" />;
+  }
 
   return (
     <div className="min-h-screen bg-white text-gray-600 flex">
@@ -55,18 +80,19 @@ export default function AdminLayout({
         {/* User profile & Logout */}
         <div className="p-6 border-t border-gray-250 bg-gray-50/50">
           <div className="bg-white border border-gray-300 p-4 rounded-[4px] mb-4">
-            <p className="text-sm font-bold text-gray-650 truncate uppercase tracking-tight">Super Admin</p>
+            <p className="text-sm font-bold text-gray-650 truncate uppercase tracking-tight">{user?.name}</p>
             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">
-              Infrastructure Control
+              {ROLE_LABELS[user?.role ?? ""] ?? user?.role}
             </p>
           </div>
 
-          <Link
-            href="/"
+          <button
+            type="button"
+            onClick={handleSignOut}
             className="flex items-center justify-center w-full px-4 py-3 rounded-[4px] text-xs font-bold uppercase tracking-wider text-clinical-red hover:bg-clinical-red-light transition-all border border-clinical-red/20"
           >
             Sign Out
-          </Link>
+          </button>
         </div>
       </aside>
 
@@ -78,14 +104,6 @@ export default function AdminLayout({
             <h1 className="text-sm font-bold text-gray-500 uppercase tracking-widest leading-none">
               Workspace Monitor
             </h1>
-            <div className="hidden sm:flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wider">
-              <span className="bg-clinical-green-light text-clinical-green px-3 py-1 rounded-[4px]">
-                System: Healthy
-              </span>
-              <span className="bg-clinical-blue-light text-clinical-blue px-3 py-1 rounded-[4px]">
-                API Traffic: Normal
-              </span>
-            </div>
           </div>
 
           {/* Current Date System */}

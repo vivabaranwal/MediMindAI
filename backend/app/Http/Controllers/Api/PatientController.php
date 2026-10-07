@@ -40,7 +40,7 @@ class PatientController extends Controller
      */
     public function store(StorePatientRequest $request): JsonResponse
     {
-        $patient = $this->patientService->onboardPatient($request->validated());
+        $patient = $this->patientService->onboardPatient($request->validated(), $request->ip());
 
         return response()->json([
             'success' => true,
@@ -62,6 +62,11 @@ class PatientController extends Controller
                 'message' => 'Patient not found.',
             ], 404);
         }
+
+        $patient->loadMissing('allergies');
+        $consents = app(\App\Services\Ai\ConsentService::class);
+        $patient->setAttribute('ai_consent', $consents->hasAiConsent($patient));
+        $patient->setAttribute('data_consent', $consents->hasConsent($patient, 'data_collection'));
 
         return response()->json([
             'success' => true,
@@ -89,6 +94,28 @@ class PatientController extends Controller
             'success' => true,
             'message' => 'Patient profile updated successfully.',
             'data' => $patient,
+        ]);
+    }
+
+    /**
+     * Record the patient's decision on AI-assisted processing (latest decision wins).
+     */
+    public function consent(\Illuminate\Http\Request $request, int $id, \App\Services\Ai\ConsentService $consents): JsonResponse
+    {
+        $data = $request->validate([
+            'consented' => ['required', 'boolean'],
+        ]);
+
+        $patient = \App\Models\Patient::find($id);
+        if (!$patient) {
+            return response()->json(['success' => false, 'message' => 'Patient not found.'], 404);
+        }
+
+        $consents->record($patient, \App\Services\Ai\ConsentService::AI, $data['consented'], $request->ip());
+
+        return response()->json([
+            'success' => true,
+            'ai_consent' => $consents->hasAiConsent($patient),
         ]);
     }
 }

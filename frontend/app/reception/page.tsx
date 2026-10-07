@@ -10,6 +10,9 @@ import {
 import { Alert } from "@/components/ui/Alert";
 import { Spinner } from "@/components/ui/LoadingState";
 import apiClient from "@/services/apiClient";
+import { DirectoryService } from "@/services/ai.service";
+import { toApiError } from "@/lib/errors";
+import { DoctorDto } from "@/types/ai";
 
 interface QueueEntry {
   id: number;
@@ -27,19 +30,21 @@ interface AppointmentRecord {
   id: number;
   slot_token: number;
   patient_id: number;
-  patient?: { code?: string; name?: string; age?: number; gender?: string };
+  patient?: { patient_code?: string; name?: string; age?: number; gender?: string };
   status: string;
   triage_level?: string;
 }
 
 export default function ReceptionDashboard() {
-  const [selectedDoctorId, setSelectedDoctorId] = useState<number>(1);
+  const [doctors, setDoctors] = useState<DoctorDto[]>([]);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<number | null>(null);
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [filter, setFilter] = useState("All");
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
 
   const fetchQueue = async (doctorId: number) => {
+    const doctorLabel = doctors.find((d) => d.id === doctorId)?.name ?? "";
     setIsLoading(true);
     setErrorMsg("");
     try {
@@ -58,40 +63,51 @@ export default function ReceptionDashboard() {
           return {
             id: appt.id,
             token: appt.slot_token,
-            code: appt.patient?.code || `MM-2026-${String(appt.patient_id).padStart(5, "0")}`,
+            code: appt.patient?.patient_code || `PT-${appt.patient_id}`,
             name: appt.patient?.name || "Unknown Patient",
             age: appt.patient?.age || "--",
             gender: appt.patient?.gender || "Other",
-            doctor: doctorId === 1 ? "Dr. Alok Verma (ENT)" : "Dr. Neha Shah (Otology)",
+            doctor: doctorLabel,
             status: uiStatus,
             triage: appt.triage_level || "green"
           };
         });
         setQueue(mappedQueue);
       }
-    } catch (err: unknown) {
-      console.error(err);
-      const e = err as { response?: { data?: { message?: string } }; message?: string };
-      setErrorMsg(e.response?.data?.message || e.message || "Failed to load clinic queue.");
+    } catch (err) {
+      setErrorMsg(toApiError(err, "Failed to load clinic queue.").message);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Load the real doctor list once, and start on the first doctor.
   useEffect(() => {
-    fetchQueue(selectedDoctorId);
-  }, [selectedDoctorId]);
+    DirectoryService.doctors("junior")
+      .then((list) => {
+        setDoctors(list);
+        setSelectedDoctorId(list[0]?.id ?? null);
+        if (list.length === 0) setIsLoading(false);
+      })
+      .catch((err) => {
+        setErrorMsg(toApiError(err, "Failed to load the doctor list.").message);
+        setIsLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (selectedDoctorId !== null) fetchQueue(selectedDoctorId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDoctorId, doctors]);
 
   const sendToDoctor = async (id: number) => {
     try {
       await apiClient.patch(`/appointments/${id}/status`, {
         status: "in_consultation"
       });
-      fetchQueue(selectedDoctorId);
-    } catch (err: unknown) {
-      console.error(err);
-      const e = err as { response?: { data?: { message?: string } }; message?: string };
-      alert(e.response?.data?.message || e.message || "Failed to initiate consultation.");
+      if (selectedDoctorId !== null) fetchQueue(selectedDoctorId);
+    } catch (err) {
+      setErrorMsg(toApiError(err, "Failed to start the consultation.").message);
     }
   };
 
@@ -139,12 +155,16 @@ export default function ReceptionDashboard() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Queue:</span>
           <select
-            value={selectedDoctorId}
+            value={selectedDoctorId ?? ""}
             onChange={(e) => setSelectedDoctorId(parseInt(e.target.value, 10))}
             className="bg-white border border-gray-300 text-xs font-bold uppercase rounded p-2 focus:outline-none focus:border-clinical-blue tracking-wider"
           >
-            <option value="1">Dr. Alok Verma (ENT Spec. - General)</option>
-            <option value="2">Dr. Neha Shah (Otology Spec. - Ear)</option>
+            {doctors.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+                {d.specialization ? ` (${d.specialization})` : ""}
+              </option>
+            ))}
           </select>
         </div>
       </div>

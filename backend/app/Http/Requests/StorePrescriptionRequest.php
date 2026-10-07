@@ -20,6 +20,8 @@ class StorePrescriptionRequest extends FormRequest
             'medicines.*.dosage' => ['required', 'string'],
             'medicines.*.frequency' => ['required', 'string'],
             'medicines.*.duration' => ['required', 'string'],
+            'medicines.*.instructions' => ['nullable', 'string', 'max:300'],
+            'diagnosis' => ['nullable', 'string', 'max:500'],
             'instructions' => ['nullable', 'string'],
             'followup_date' => ['nullable', 'date'],
         ];

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\EncryptedJson;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -21,8 +22,9 @@ class Symptom extends Model
     ];
 
     protected $casts = [
-        'symptoms' => 'array',
-        'red_flags' => 'array',
+        'transcription' => 'encrypted',
+        'symptoms' => EncryptedJson::class,
+        'red_flags' => EncryptedJson::class,
         'ai_processed' => 'boolean',
         'created_at' => 'datetime',
     ];

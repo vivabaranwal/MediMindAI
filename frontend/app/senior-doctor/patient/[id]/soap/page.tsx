@@ -1,15 +1,17 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useSeniorDoctorStore, useSoapNoteSWR } from "@/store/seniorDoctorStore";
+import { useSeniorDoctorStore, useSoapNote } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
 import { SOAPEditor } from "@/components/senior-doctor/SOAPEditor";
 import { DoctorBriefCard } from "@/components/senior-doctor/DoctorBriefCard";
 import { ClinicalTimeline } from "@/components/senior-doctor/ClinicalTimeline";
 import { SOAPNote } from "@/types/senior-doctor";
 import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
 import { Spinner } from "@/components/ui/LoadingState";
+import { toApiError } from "@/lib/errors";
 
 interface SoapNotePageProps {
   params: {
@@ -17,7 +19,10 @@ interface SoapNotePageProps {
   };
 }
 
+const IDLE = { status: "idle" as const };
+
 export default function SoapNotePage({ params }: SoapNotePageProps) {
+  const patientId = Number(params.id);
   const {
     patients,
     assessments,
@@ -27,90 +32,88 @@ export default function SoapNotePage({ params }: SoapNotePageProps) {
     approveSoap,
     prescriptions,
     followups,
+    ai,
     loadEncounterForPatient,
+    loadBrief,
     saveSoapDraft,
     signSoapNote,
   } = useSeniorDoctorStore();
 
-  const patientId = Number(params.id);
   const patient = patients.find((p) => p.id === patientId);
-  const { isLoading: isSoapLoading } = useSoapNoteSWR(patient?.encounterId);
-  const [error, setError] = useState<string | null>(null);
+  const { data: storedNote, isLoading: isNoteLoading, generate } = useSoapNote(patient?.encounterId, patientId);
+
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const triedAuto = useRef(false);
 
   useEffect(() => {
     let active = true;
-    const load = async () => {
-      try {
-        setError(null);
-        await loadEncounterForPatient(patientId);
-      } catch (err: unknown) {
-        if (active) {
-          const e = err as Error;
-          setError(e.message || "Failed to load patient and SOAP note.");
-        }
-      }
-    };
-    load();
+    loadEncounterForPatient(patientId).catch((err) => {
+      if (active) setLoadError(err instanceof Error ? err.message : "Failed to load the patient record.");
+    });
     return () => {
       active = false;
     };
   }, [patientId, loadEncounterForPatient]);
 
-  const assessment = assessments[patientId];
-  const patientRecs = recommendations[patientId] || [];
+  const runGenerate = async () => {
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      await generate();
+    } catch (err) {
+      setGenerateError(toApiError(err, "Could not generate the SOAP draft.").message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // First visit with no note: ask the AI for a draft once. Failures show a retry, never fake text.
+  useEffect(() => {
+    if (patient?.encounterId && !isNoteLoading && storedNote === null && !triedAuto.current) {
+      triedAuto.current = true;
+      void runGenerate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient?.encounterId, isNoteLoading, storedNote]);
 
   const soap = soapNotes[patientId];
-  const prescription = prescriptions[patientId];
-  const followup = followups[patientId];
+  const state = ai[patientId];
 
   const handleSaveSoap = async (fields: Partial<SOAPNote>) => {
-    if (!patient || !patient.encounterId) return;
+    if (!patient?.encounterId) return;
+    setActionError(null);
     try {
-      updateSoap(patientId, fields);
-      const updatedSoap = {
-        ...soap,
-        ...fields
-      } as SOAPNote;
+      const merged = { ...soap, ...fields } as SOAPNote;
       await saveSoapDraft(patient.encounterId, {
-        subjective: updatedSoap.subjective,
-        objective: updatedSoap.objective,
-        assessment: updatedSoap.assessment,
-        plan: updatedSoap.plan
+        subjective: merged.subjective,
+        objective: merged.objective,
+        assessment: merged.assessment,
+        plan: merged.plan,
       });
-    } catch (err: unknown) {
-      const e = err as Error;
-      alert(e.message || "Failed to save SOAP note draft.");
+      updateSoap(patientId, fields);
+    } catch (err) {
+      setActionError(toApiError(err, "Failed to save the SOAP draft.").message);
     }
   };
 
   const handleApproveSoap = async () => {
-    if (!patient || !patient.encounterId) return;
+    if (!patient?.encounterId) return;
+    setActionError(null);
     try {
       await signSoapNote(patient.encounterId);
       approveSoap(patientId);
-    } catch (err: unknown) {
-      const e = err as Error;
-      alert(e.message || "Failed to sign SOAP note.");
+    } catch (err) {
+      setActionError(toApiError(err, "Failed to sign the SOAP note.").message);
     }
   };
 
-  if (isSoapLoading || !patient) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 space-y-4">
-        <Spinner />
-        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
-          Loading SOAP Note Builder...
-        </span>
-      </div>
-    );
-  }
-
-  if (error || !patient || !soap) {
+  if (loadError) {
     return (
       <div className="text-center py-16 space-y-4">
-        <h2 className="text-xl font-bold text-gray-500 uppercase">
-          {error || "Patient SOAP Record Not Found"}
-        </h2>
+        <h2 className="text-xl font-bold text-gray-500 uppercase">{loadError}</h2>
         <Link href="/senior-doctor/dashboard">
           <Button variant="secondary">Return to Dashboard</Button>
         </Link>
@@ -118,9 +121,40 @@ export default function SoapNotePage({ params }: SoapNotePageProps) {
     );
   }
 
+  if (!patient || !patient.encounterId || isNoteLoading || generating) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+          {generating ? "AI is drafting the SOAP note..." : "Loading SOAP Note Builder..."}
+        </span>
+      </div>
+    );
+  }
+
+  // No note and the AI could not draft one: offer retry or manual authoring.
+  if (!soap && storedNote === null) {
+    return (
+      <div className="max-w-xl mx-auto py-16 space-y-4 text-left">
+        {generateError && (
+          <Alert type="error" titleText="SOAP draft unavailable">
+            {generateError}
+          </Alert>
+        )}
+        <div className="flex gap-3">
+          <Button variant="primary" onClick={runGenerate}>
+            RETRY AI DRAFT
+          </Button>
+          <Button variant="secondary" onClick={() => updateSoap(patientId, { subjective: "", objective: "", assessment: "", plan: "", status: "draft" })}>
+            WRITE MANUALLY
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8 animate-fade-in-up">
-      {/* Patient Header */}
       <PatientHeader
         patient={patient}
         backHref={`/senior-doctor/patient/${patientId}`}
@@ -135,34 +169,47 @@ export default function SoapNotePage({ params }: SoapNotePageProps) {
         }
       />
 
-      {/* Grid workspace split */}
+      {actionError && (
+        <Alert type="error" titleText="Action failed">
+          {actionError}
+        </Alert>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        
-        {/* Left Column (SOAP Note editor, 7 cols) */}
-        <div className="lg:col-span-7">
-          <SOAPEditor
-            soapNote={soap}
-            onSave={handleSaveSoap}
-            onApprove={handleApproveSoap}
-          />
+        <div className="lg:col-span-7 space-y-4">
+          {soap && storedNote?.is_ai_generated && soap.status !== "approved" && (
+            <Alert type="info" titleText="AI-drafted note">
+              This draft was generated by AI from the documented record. Physical examination findings are not invented, so complete them yourself. Review
+              and edit before signing.
+            </Alert>
+          )}
+          {soap && <SOAPEditor soapNote={soap} onSave={handleSaveSoap} onApprove={handleApproveSoap} />}
+          {soap && soap.status !== "approved" && (
+            <div className="flex justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="text-[10px] font-bold uppercase"
+                onClick={() => {
+                  if (window.confirm("Replace the current draft with a new AI draft? Any edits you made will be lost.")) void runGenerate();
+                }}
+              >
+                REGENERATE AI DRAFT
+              </Button>
+            </div>
+          )}
         </div>
 
-        {/* Right Column (Brief & timeline, 5 cols) */}
         <div className="lg:col-span-5 space-y-6">
           <DoctorBriefCard
             patient={patient}
-            assessment={assessment}
-            recommendations={patientRecs}
+            assessment={assessments[patientId]}
+            recommendations={recommendations[patientId] || []}
+            brief={state?.brief ?? IDLE}
+            onRegenerateBrief={() => loadBrief(patientId, true)}
           />
-
-          <ClinicalTimeline
-            patient={patient}
-            soapNote={soap}
-            prescription={prescription}
-            followupPlan={followup}
-          />
+          <ClinicalTimeline patient={patient} soapNote={soap} prescription={prescriptions[patientId]} followupPlan={followups[patientId]} />
         </div>
-
       </div>
     </div>
   );

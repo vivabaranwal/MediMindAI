@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\RiskLevel;
+use App\Casts\EncryptedJson;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -17,6 +18,8 @@ class AiBrief extends Model
         'brief_text',
         'suggested_questions',
         'risk_level',
+        'risk_rationale',
+        'red_flags',
         'similar_cases',
         'llm_model_used',
         'token_count',
@@ -26,8 +29,12 @@ class AiBrief extends Model
     ];
 
     protected $casts = [
-        'suggested_questions' => 'array',
-        'similar_cases' => 'array',
+        'brief_text' => 'encrypted',
+        'risk_rationale' => 'encrypted',
+        'doctor_feedback' => 'encrypted',
+        'suggested_questions' => EncryptedJson::class,
+        'similar_cases' => EncryptedJson::class,
+        'red_flags' => EncryptedJson::class,
         'reviewed_by_doctor' => 'boolean',
         'risk_level' => RiskLevel::class,
         'created_at' => 'datetime',

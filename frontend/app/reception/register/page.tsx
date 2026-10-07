@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { toLocalIsoDate } from "@/lib/dates";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Alert } from "@/components/ui/Alert";
 import apiClient from "@/services/apiClient";
@@ -26,8 +27,11 @@ const registerSchema = zod.object({
   abha_id: zod.string().optional(),
   emergency_name: zod.string().min(3, "Emergency contact name required"),
   emergency_mobile: zod.string().min(10, "Emergency mobile must be 10 digits").max(10, "Emergency mobile must be 10 digits"),
-  consent: zod.boolean().refine(val => val === true, "Patient consent is mandatory"),
-  doctor_id: zod.string().min(1, "Please assign a doctor"),
+  allergies: zod.string().optional(),
+  medical_history: zod.string().optional(),
+  current_medications: zod.string().optional(),
+  consent: zod.boolean().refine(val => val === true, "Consent to store records is mandatory"),
+  ai_consent: zod.boolean().optional(),
 });
 
 interface RegisterFormData {
@@ -41,9 +45,16 @@ interface RegisterFormData {
   abha_id?: string;
   emergency_name: string;
   emergency_mobile: string;
+  allergies?: string;
+  medical_history?: string;
+  current_medications?: string;
   consent: boolean;
-  doctor_id: string;
+  ai_consent?: boolean;
 }
+
+/** "a, b\nc" -> ["a", "b", "c"] */
+const splitList = (text?: string): string[] =>
+  (text ?? "").split(/[,\n;]/).map((t) => t.trim()).filter(Boolean);
 
 export default function RegisterPatient() {
   const [isLoading, setIsLoading] = useState(false);
@@ -67,8 +78,11 @@ export default function RegisterPatient() {
       abha_id: "",
       emergency_name: "",
       emergency_mobile: "",
+      allergies: "",
+      medical_history: "",
+      current_medications: "",
       consent: false,
-      doctor_id: "",
+      ai_consent: false,
     },
   });
 
@@ -94,6 +108,11 @@ export default function RegisterPatient() {
         abha_id: data.abha_id || null,
         emergency_contact_name: data.emergency_name || null,
         emergency_contact_mobile: data.emergency_mobile || null,
+        allergies: splitList(data.allergies).map((allergen) => ({ allergen })),
+        medical_history: splitList(data.medical_history),
+        current_medications: splitList(data.current_medications),
+        data_consent: data.consent,
+        ai_consent: Boolean(data.ai_consent),
       });
 
       const newPatient = patientResponse.data.data;
@@ -101,14 +120,13 @@ export default function RegisterPatient() {
         throw new Error("Patient registration did not return a valid patient ID.");
       }
 
-      // 2. Assign Patient to Consult Queue of the Selected Doctor (Book Appointment)
+      // 2. Add the patient to the intake queue (the server assigns the junior doctor)
       const now = new Date();
-      const appointment_date = now.toISOString().split("T")[0];
+      const appointment_date = toLocalIsoDate(now);
       const appointment_time = now.toTimeString().split(" ")[0].substring(0, 5); // Format: "HH:MM"
 
       await apiClient.post("/appointments", {
         patient_id: newPatient.id,
-        doctor_id: parseInt(data.doctor_id, 10),
         appointment_date,
         appointment_time,
         type: "walk_in",
@@ -116,7 +134,7 @@ export default function RegisterPatient() {
         chief_complaint: "General Walk-in Consultation",
       });
 
-      // Navigate to Reception Dashboard queue instead of hanging on mock success screen
+      // Navigate to Reception Dashboard queue
       router.push("/reception");
     } catch (err: unknown) {
       console.error(err);
@@ -264,33 +282,55 @@ export default function RegisterPatient() {
             </div>
           </div>
 
+          {/* Medical background: allergies drive the prescription safety check */}
+          <div className="space-y-6">
+            <div className="text-sm font-bold text-gray-650 uppercase tracking-wider border-b border-gray-250 pb-2">
+              2b. Medical Background
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Input
+                label="Known Allergies"
+                placeholder="e.g. Penicillin, Sulfa (comma separated)"
+                {...register("allergies")}
+              />
+              <Input
+                label="Existing Conditions"
+                placeholder="e.g. Asthma, Diabetes"
+                {...register("medical_history")}
+              />
+              <Input
+                label="Current Medications"
+                placeholder="e.g. Metformin 500mg"
+                {...register("current_medications")}
+              />
+            </div>
+            <p className="text-[11px] text-gray-400 normal-case">
+              Enter &quot;none&quot; in your own words if the patient reports no allergies; leaving it blank means not recorded.
+            </p>
+          </div>
+
           {/* Section 3: Queue Assignment */}
           <div className="space-y-6">
             <div className="text-sm font-bold text-gray-650 uppercase tracking-wider border-b border-gray-250 pb-2">
               3. Consult Queue Assignment
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Select
-                label="Select Assigned Doctor"
-                required
-                error={errors.doctor_id?.message}
-                {...register("doctor_id")}
-              >
-                <option value="">-- Choose Consultation Doctor --</option>
-                <option value="1">Dr. Alok Verma (ENT Spec. - General)</option>
-                <option value="2">Dr. Neha Shah (Otology Spec. - Ear)</option>
-              </Select>
-            </div>
+            <p className="text-xs text-gray-450 leading-normal">
+              New patients go to the junior doctor for intake assessment. The junior doctor chooses the senior doctor afterwards.
+            </p>
           </div>
 
           {/* Consent Checkbox Area */}
           <div className="bg-gray-50 p-6 border border-gray-200 rounded-[4px] space-y-4">
             <Checkbox
-              label="I hereby verify that the patient has provided explicit consent to store demographic information, upload diagnostic reports, and allow AI-assisted processing of clinical voice dictations/intakes under DPDP compliance regulations."
+              label="The patient has given explicit consent to store their demographic and clinical information and uploaded reports (required, DPDP)."
               error={errors.consent?.message}
               required
               {...register("consent")}
+            />
+            <Checkbox
+              label="The patient also consents to AI-assisted processing of their data (intake questions, summaries, report reading, chat). Optional: without it, AI features stay off for this patient but allergy checks still apply."
+              {...register("ai_consent")}
             />
           </div>
 

@@ -1,190 +1,119 @@
 # MediMind AI
 
-> **Premium clinic workflow intelligence platform** — powered by AI, built for modern healthcare teams.
+Clinic workflow platform for an ENT practice. It moves a patient through **reception → junior doctor intake → senior doctor review → SOAP note → prescription → follow-up**, with AI assistance at each clinical step.
 
-MediMind AI is **not** a patient-facing app. It is a clinical operations platform designed to streamline the workflow between reception, junior doctors, and senior doctors inside a clinic or hospital — with AI at every decision point.
+The AI assists; it never decides. Every AI output is a labelled draft for a licensed doctor to review.
 
----
+| Role | Portal | What they do |
+|---|---|---|
+| Reception | `/reception` | Register patients (allergies, consents), manage the queue, upload reports |
+| Junior doctor | `/junior-doctor` | AI-guided intake questions, vitals, AI case summary, hand off to a senior doctor |
+| Senior doctor | `/senior-doctor` | Review brief, report findings and suggestions, ask questions about the record, SOAP, prescription, follow-up |
+| Admin | `/admin` | Staff management, analytics, system overview, audit trail |
 
-## What It Does
-
-MediMind digitizes and intelligences the full patient lifecycle inside a clinic:
-
-```
-Reception → Patient Registration
-         → Junior Doctor Assessment (AI Dynamic Questioning)
-         → AI Clinical Summary
-         → Senior Doctor Review (AI Recommendations)
-         → Doctor Decision → SOAP Note Generation
-         → Prescription → Follow-up Planning
-```
-
-Every stage is powered by AI — from adaptive questioning to differential diagnosis recommendations to SOAP note generation.
-
----
-
-## Three Separate Role Dashboards
-
-| Role | Access | Key Responsibilities |
-|------|--------|----------------------|
-| **Reception** | `/reception/*` | Patient registration, search, profile view, forward to junior doctor |
-| **Junior Doctor** | `/junior-doctor/*` | AI-guided patient assessment, dynamic questioning, summary review, case forwarding |
-| **Senior Doctor** | `/senior-doctor/*` | Clinical review, AI recommendations, SOAP authoring, prescription, follow-up |
-
-Each dashboard has its own login, layout, navigation, and component set. Role isolation is enforced from the router level.
-
----
-
-## Project Structure
+## Architecture
 
 ```
-medimind-dev-plan/
-├── frontend/                   # Next.js 14 frontend (TypeScript + Tailwind)
-│   ├── app/
-│   │   ├── (auth)/             # Login pages for all roles
-│   │   ├── reception/          # Reception dashboard & pages
-│   │   ├── junior-doctor/      # Junior doctor dashboard & pages
-│   │   ├── senior-doctor/      # Senior doctor dashboard & pages
-│   │   ├── admin/              # Admin panel (placeholder)
-│   │   ├── layout.tsx          # Root layout with global providers
-│   │   ├── page.tsx            # Landing / role selection page
-│   │   └── globals.css         # Design system tokens & global styles
-│   ├── components/
-│   │   ├── ui/                 # Shared UI library (Button, Card, Modal, etc.)
-│   │   ├── junior-doctor/      # Junior doctor-specific components
-│   │   └── senior-doctor/      # Senior doctor-specific components
-│   ├── services/               # API service layer (Axios-based)
-│   ├── store/                  # Zustand global state stores
-│   ├── types/                  # TypeScript domain interfaces
-│   ├── hooks/                  # Custom React hooks
-│   ├── lib/                    # Utility libraries
-│   └── utils/                  # Helper functions
-│
-├── backend/                    # Backend (Clean Architecture scaffold)
-│   ├── domain/                 # Entities, value objects, domain events
-│   ├── application/            # Use cases, application services
-│   ├── infrastructure/         # DB, external APIs, AI integrations
-│   ├── presentation/           # API controllers, routes, middleware
-│   ├── shared/                 # Shared utilities, constants, exceptions
-│   └── tests/                  # Unit and integration tests
-│
-└── .gitignore                  # Excludes .dev/, node_modules, build, env files
+Browser (Next.js)
+   │  HTTPS, Sanctum bearer token
+   ▼
+Laravel API ─────────── PostgreSQL        system of record: auth, roles, patients, encounters, SOAP,
+   │  │                                    prescriptions, reports, consents, audit log
+   │  └─ queue worker ──┐
+   │ private network,   │  report analysis jobs (OCR + AI) run in the background
+   │ shared secret      ▼
+   └──────────────► AI Engine (FastAPI, private)  ── OpenAI (chat + embeddings)
+                         │
+                         ├─ Tesseract OCR (local)  scans never leave the container
+                         └─ Qdrant                 searchable chunks of each patient's reports
 ```
 
-> **Note:** The `.dev/` folder contains private planning documents, architecture specs, and development artifacts. It is excluded from this repository via `.gitignore`.
+Key rules:
+- **Laravel is the only public API.** The browser never talks to the AI engine; the engine, database and vector store are not published by Docker.
+- **Laravel owns all data.** It sends the engine exactly the context each call needs; the engine keeps nothing except the vector index.
+- **AI needs patient consent** (`ai_assistance`, recorded at registration). Without it no patient data leaves Laravel. Drug-allergy checks do **not** depend on consent or on the engine being up.
+- **No mock data anywhere.** If the AI is unavailable the UI shows an error with a retry; nothing is invented and nothing is saved.
 
----
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the pipelines and data flows, and [docs/SECURITY.md](docs/SECURITY.md) for the security model.
 
-## Tech Stack
+## Repository layout
 
-### Frontend
-| Layer | Technology |
-|-------|------------|
-| Framework | Next.js 14 (App Router) |
-| Language | TypeScript |
-| Styling | Tailwind CSS |
-| State Management | Zustand |
-| Forms | React Hook Form + Zod |
-| HTTP Client | Axios |
-| Icons | Lucide React |
+```
+backend/              Laravel 13 API (PHP 8.3): controllers → services → repositories
+  app/Services/Ai/    context builder, consent, assistant (chat/intake/suggestions), report analysis
+  app/Services/Clinical/DrugAllergyChecker.php   deterministic allergy rules
+medimind-ai-engine/   FastAPI engine: pipelines, prompts, OCR, retrieval, safety rules (see its README)
+frontend/             Next.js 14 (App Router, Zustand, Tailwind)
+docs/                 architecture and security documentation
+project_live_update/  historical development notes
+docker-compose.yml    full stack
+.env.example          compose configuration
+```
 
-### Backend *(in progress)*
-| Layer | Technology |
-|-------|------------|
-| Primary API | FastAPI (Python) |
-| Auth / BFF | Laravel (PHP) |
-| AI Agents | LangGraph |
-| Database | PostgreSQL |
-| ORM | SQLAlchemy / Eloquent |
-| Containerization | Docker + Docker Compose |
+## Run with Docker
 
----
-
-## Getting Started
-
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-
-### Frontend Development
+Requires Docker. Only ports 3000 (web) and 8000 (API) are published.
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cp .env.example .env      # fill APP_KEY, POSTGRES_PASSWORD, INTERNAL_API_SECRET, OPENAI_API_KEY
+docker compose up -d --build
+docker compose exec backend php artisan migrate --force
+docker compose exec backend php artisan db:seed --force   # first admin; set SEED_ADMIN_PASSWORD in .env first
 ```
 
-The frontend will be available at **http://localhost:3000**
+Open http://localhost:3000. Compose refuses to start if a required secret is missing.
 
-### Available Routes
+`OTP_SMS_DRIVER=log` writes OTP codes to the Laravel log and only works with `APP_ENV=local`. Production needs a real SMS provider (implement `App\Contracts\SmsGateway`).
 
-| Route | Description |
-|-------|-------------|
-| `/` | Landing page — role selection |
-| `/reception` | Reception dashboard |
-| `/reception/register` | New patient registration |
-| `/reception/search` | Patient search |
-| `/reception/patient/[id]` | Patient profile view |
-| `/junior-doctor` | Junior doctor dashboard |
-| `/junior-doctor/queue` | Patient queue |
-| `/junior-doctor/patient/[id]/assessment` | AI assessment workspace |
-| `/junior-doctor/patient/[id]/questions` | Dynamic AI questions |
-| `/junior-doctor/patient/[id]/summary` | AI clinical summary |
-| `/senior-doctor` | Senior doctor dashboard |
-| `/senior-doctor/queue` | Case review queue |
-| `/senior-doctor/patient/[id]/clinical-review` | AI-assisted clinical review |
-| `/senior-doctor/patient/[id]/soap` | SOAP note editor |
-| `/senior-doctor/patient/[id]/prescription` | Prescription builder |
-| `/senior-doctor/patient/[id]/followup` | Follow-up planner |
+## Run locally without Docker
 
----
+```bash
+# AI engine (needs Qdrant on :6333 and Tesseract with eng+hin language data for OCR)
+cd medimind-ai-engine && python -m venv venv && venv\Scripts\activate
+pip install -r requirements-dev.txt
+cp .env.example .env            # INTERNAL_API_SECRET (24+ chars) and OPENAI_API_KEY
+uvicorn app.main:app --port 8080
 
-## Design System
+# Backend (PHP 8.3+)
+cd backend && composer install && cp .env.example .env && php artisan key:generate
+# set FASTAPI_URL=http://localhost:8080 and FASTAPI_INTERNAL_SECRET=<same secret as the engine>
+php artisan migrate --seed && php artisan serve --port 8000
+php artisan queue:work          # report analysis runs here
 
-MediMind uses a premium clinical aesthetic — dark, authoritative, and precise.
+# Frontend
+cd frontend && npm install && npm run dev
+```
 
-- **Color Palette:** Deep navy backgrounds, teal/cyan accents, clinical white text
-- **Typography:** Geist (sans + mono) for clean medical readability
-- **Components:** Fully custom UI library — no third-party component framework
-- **Animations:** Subtle micro-animations for professional feel
-- **Density:** Information-dense layouts suited to clinical workflows
+## Tests
 
----
+| Suite | Command | Needs |
+|---|---|---|
+| Backend (PHPUnit) | `cd backend && php vendor/bin/phpunit` | PHP 8.3 (sqlite in memory) |
+| AI engine (pytest) | `cd medimind-ai-engine && pytest` | nothing: no network, no API key |
+| Frontend (Vitest) | `cd frontend && npm test` | nothing |
+| Frontend static | `cd frontend && npx tsc --noEmit && npm run lint && npm run build` | |
 
-## AI Features (Planned Integration)
+The engine and backend tests replace only the outside-world boundaries (LLM, embeddings, OCR, the engine's HTTP API). Real OCR needs Tesseract and is exercised in the Docker image.
 
-- **Dynamic Questioning Engine** — AI generates contextual follow-up questions based on patient answers in real time
-- **Clinical Summary Generation** — AI synthesizes assessment data into structured clinical summaries
-- **Differential Diagnosis Support** — AI provides ranked differentials with evidence references
-- **SOAP Note Generation** — AI drafts SOAP notes from structured encounter data
-- **Similar Case Matching** — AI surfaces historically similar cases for reference
-- **Prescription Validation** — AI flags potential drug interactions and contraindications
+## Key behaviours worth knowing
 
----
+- **Red-flag triage floor.** Airway and neck red flags (and mastoid signs, sudden hearing loss, etc.) raise risk in code. The model can raise risk further but never lower it below the floor. Negations ("no shortness of breath") are respected.
+- **Report pipeline.** Upload → queue → validate by file content → PDF text layer, or OCR for scans → structured findings (lab flags re-checked against printed reference ranges) → indexed per patient. A name on the report that doesn't match the patient raises a warning.
+- **Grounded chat.** Answers must cite the patient chart or a report excerpt; uncited answers are replaced by "not found in the record". Retrieval is filtered by patient and cannot cross patients.
+- **Prescription safety.** Every medicine, including free-text ones, is checked against the patient's recorded allergies. Critical conflicts block approval unless the prescribing doctor explicitly overrides.
 
-## Development Status
+## Known limitations
 
-| Module | Status |
-|--------|--------|
-| Project Structure & Architecture | ✅ Complete |
-| Design System & UI Library | ✅ Complete |
-| Reception Dashboard | ✅ Complete |
-| Junior Doctor Dashboard | ✅ Complete |
-| Senior Doctor Dashboard | ✅ Complete |
-| Backend API (FastAPI) | 🔄 In Progress |
-| AI Agent Integration (LangGraph) | 🔄 Planned |
-| Authentication & Auth Guards | 🔄 Planned |
-| Database Schema & Migrations | 🔄 Planned |
-| Docker Dev Environment | 🔄 Planned |
+- Report uploads are stored on the application disk; move to S3/MinIO for production scale.
+- The browser keeps the Sanctum token in `localStorage`; switching to Sanctum's cookie (SPA) mode removes that XSS exposure.
+- The backend image uses `artisan serve`; put php-fpm + nginx in front for production.
+- Voice dictation, similar-case matching and cohort outcome projections from the original plan are not implemented (the placeholder UI that faked them was removed).
+- Patient fields are stored unencrypted at the application level; enable database/volume encryption for production.
+- The formulary list in the prescription builder is a static convenience list (`frontend/lib/formulary.ts`).
+- Any doctor can open any patient in clinic (no per-doctor assignment checks yet).
 
----
+## Further reading
 
-## Contributing
-
-This is a private development project. Architecture decisions and sprint planning live in the `.dev/` folder (not committed to this repo).
-
----
-
-## License
-
-Private — All rights reserved.
+- [AI engine README](medimind-ai-engine/README.md)
+- [Architecture & data flows](docs/ARCHITECTURE.md)
+- [Security model](docs/SECURITY.md)

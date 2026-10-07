@@ -33,6 +33,23 @@ class EncounterRepository
             ->first();
     }
 
+    /**
+     * A doctor's encounters: all active ones, plus completed ones when asked.
+     *
+     * @param  string  $completed  'none' (active only), 'today' (plus encounters completed today) or 'all'
+     */
+    public function getEncountersForDoctor(int $doctorId, string $completed = 'none'): Collection
+    {
+        return Encounter::where('doctor_id', $doctorId)
+            ->when($completed === 'none', fn ($q) => $q->where('status', '!=', 'completed'))
+            ->when($completed === 'today', fn ($q) => $q->where(fn ($w) => $w
+                ->where('status', '!=', 'completed')
+                ->orWhereDate('completed_at', today())))
+            ->with(['patient.allergies', 'appointment', 'doctor.user'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+    }
+
     public function getActiveEncountersForDoctor(int $doctorId): Collection
     {
         return Encounter::where('doctor_id', $doctorId)

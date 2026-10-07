@@ -11,7 +11,7 @@ import { AnswerInput } from "@/components/junior-doctor/AnswerInput";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { QuestionService } from "@/services/question.service";
+import { Alert } from "@/components/ui/Alert";
 import { Spinner } from "@/components/ui/LoadingState";
 
 interface StartAssessmentPageProps {
@@ -22,7 +22,7 @@ interface StartAssessmentPageProps {
 
 export default function StartAssessmentPage({ params }: StartAssessmentPageProps) {
   const router = useRouter();
-  const { patients, assessments, startAssessment } = useJuniorDoctorStore();
+  const { patients, assessments, beginAssessment } = useJuniorDoctorStore();
   
   const patientId = Number(params.id);
   const patient = patients.find((p) => p.id === patientId);
@@ -34,6 +34,7 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
   const [temp, setTemp] = useState(patient?.vitals?.temp || "");
   const [spo2, setSpo2] = useState(patient?.vitals?.spo2?.toString() || "");
   const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState("");
 
   if (!patient) {
     return (
@@ -51,9 +52,9 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
     if (!chiefComplaint.trim()) return;
 
     setGenerating(true);
+    setError("");
     try {
-      const questions = await QuestionService.generateQuestions(chiefComplaint);
-      startAssessment(patientId, chiefComplaint, questions, {
+      await beginAssessment(patientId, chiefComplaint, {
         bp: bp || undefined,
         hr: hr ? parseInt(hr, 10) : undefined,
         temp: temp || undefined,
@@ -61,7 +62,7 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
       });
       router.push(`/junior-doctor/patient/${patientId}/questions`);
     } catch (err) {
-      console.error(err);
+      setError(err instanceof Error ? err.message : "Could not generate questions.");
     } finally {
       setGenerating(false);
     }
@@ -90,10 +91,14 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
         <div className="lg:col-span-8">
           <Card titleText="Clinical Intake Assessment" className="border border-gray-300">
             <form onSubmit={handleGenerateQuestions} className="space-y-6">
+              {error && (
+                <Alert type="error" titleText="Could not generate questions">
+                  {error}
+                </Alert>
+              )}
               <div>
                 <p className="text-xs text-gray-450 uppercase font-semibold leading-relaxed mb-4">
-                  Please record the patient&apos;s primary presenting symptom cluster or chief complaint below. 
-                  You may use the secure voice dictation scanner to transcribe spoken notes.
+                  Record the patient&apos;s primary presenting symptoms or chief complaint below, including duration.
                 </p>
                 
                 <AnswerInput
@@ -103,7 +108,6 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
                   placeholder="Record patient complaints, symptoms, pain duration, and secondary concerns..."
                   required
                   rows={6}
-                  dictationSample="Patient reports left side earache lasting 3 days. Notes localized throbbing pain, sleep interruption, and subjective fever yesterday evening. Denies any ear drainage or cold symptoms."
                 />
               </div>
 
@@ -121,6 +125,9 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
                   <Input
                     label="Heart Rate (bpm)"
                     type="number"
+                    min={20}
+                    max={250}
+                    onWheel={(e) => e.currentTarget.blur()} // a scroll over a focused number field would silently change it
                     value={hr}
                     onChange={(e) => setHr(e.target.value)}
                     placeholder="e.g. 72"
@@ -134,6 +141,10 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
                   <Input
                     label="Oxygen Saturation (%)"
                     type="number"
+                    min={0}
+                    max={100}
+                    onWheel={(e) => e.currentTarget.blur()} // a scroll over a focused number field would silently change it
+                    error={spo2 && (Number(spo2) > 100 || Number(spo2) < 90) ? (Number(spo2) > 100 ? "SpO2 cannot exceed 100%. Check the entry." : "SpO2 below 90% is critically low. Re-measure and confirm the value before continuing.") : undefined}
                     value={spo2}
                     onChange={(e) => setSpo2(e.target.value)}
                     placeholder="e.g. 98"
@@ -167,8 +178,8 @@ export default function StartAssessmentPage({ params }: StartAssessmentPageProps
           <Card titleText="Intake Protocol" className="border border-gray-300">
             <div className="text-xs font-semibold text-gray-500 space-y-3 leading-relaxed uppercase">
               <p>1. Record presenting symptom details with durations explicitly.</p>
-              <p>2. Trigger AI compiler to receive specific clinical questionnaires mapped to the symptoms.</p>
-              <p>3. Complete all accepted screening questions to compile the handoff SOAP summary.</p>
+              <p>2. Generate AI intake questions tailored to this patient&apos;s complaint, age and history.</p>
+              <p>3. Answer the accepted questions, then compile the case summary for the senior doctor.</p>
             </div>
           </Card>
         </div>

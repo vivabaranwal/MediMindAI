@@ -5,6 +5,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/store/authStore";
 import apiClient from "@/services/apiClient";
+import { DirectoryService } from "@/services/ai.service";
+import { useRequireRole } from "@/hooks/useRequireRole";
+
+const RECEPTION_ROLES = ["front_desk", "clinic_admin", "super_admin"];
 
 export default function ReceptionLayout({
   children,
@@ -13,38 +17,20 @@ export default function ReceptionLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, token, logout, initialize } = useAuthStore();
+  const logout = useAuthStore((s) => s.logout);
   const [stats, setStats] = useState({ queue: 0, pending: 0 });
-  const [isReady, setIsReady] = useState(false);
-  const [mounted, setMounted] = useState(false);
 
-  // Initialize store from localStorage on mount
-  useEffect(() => {
-    initialize();
-    setIsReady(true);
-    setMounted(true);
-  }, [initialize]);
-
-  // Auth Guard: if initialized and no token, redirect to login
-  useEffect(() => {
-    if (isReady) {
-      const storedToken = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-      if (!token && !storedToken) {
-        router.push("/reception-login");
-      }
-    }
-  }, [isReady, token, router]);
+  // Role guard: only reception/admin staff belong here (the API enforces this again).
+  const { ready, user } = useRequireRole(RECEPTION_ROLES, "/reception-login", { skip: pathname === "/reception-login" });
 
   // Fetch dynamic stats for queue and pending cases
   const fetchStats = async () => {
     try {
-      const [res1, res2] = await Promise.all([
-        apiClient.get("/appointments/queue", { params: { doctor_id: 1 } }),
-        apiClient.get("/appointments/queue", { params: { doctor_id: 2 } }),
-      ]);
-      const list1 = res1.data?.data || [];
-      const list2 = res2.data?.data || [];
-      const allAppointments = [...list1, ...list2];
+      const doctors = await DirectoryService.doctors();
+      const responses = await Promise.all(
+        doctors.map((d) => apiClient.get("/appointments/queue", { params: { doctor_id: d.id } })),
+      );
+      const allAppointments = responses.flatMap((r) => r.data?.data || []);
       
       const total = allAppointments.length;
       const pending = allAppointments.filter(
@@ -58,15 +44,12 @@ export default function ReceptionLayout({
   };
 
   useEffect(() => {
-    // Only fetch stats if we have a token (authenticated)
-    const storedToken = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (token || storedToken) {
-      fetchStats();
-      // Poll stats every 30 seconds
-      const interval = setInterval(fetchStats, 30000);
-      return () => clearInterval(interval);
-    }
-  }, [token, isReady]);
+    if (!ready) return;
+    fetchStats();
+    const interval = setInterval(fetchStats, 30000); // refresh every 30 seconds
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   const handleLogout = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -80,27 +63,23 @@ export default function ReceptionLayout({
 
   const navigation = [
     { name: "DASHBOARD HUB", href: "/reception" },
+    { name: "VISIT HISTORY", href: "/reception/visits" },
     { name: "PATIENT SEARCH", href: "/reception/search" },
     { name: "REGISTER PATIENT", href: "/reception/register" },
   ];
 
-  // Prevent flash of unauthenticated content or hydration mismatch
-  if (!mounted) {
+  // Render nothing until the server has confirmed an allowed session (no flash of protected content).
+  if (!ready) {
     return null;
   }
 
-  const storedToken = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  if (!token && !storedToken) {
-    return null;
-  }
-
-  const displayName = user?.name || "Viva Baranwal";
+  const displayName = user?.name ?? "";
   const displayRole = user?.role === "front_desk" ? "Front Desk Staff" : (user?.role || "Staff");
 
   return (
-    <div className="min-h-screen bg-white text-gray-600 flex">
+    <div className="min-h-screen bg-white text-gray-600 flex print:block">
       {/* Off-white Sidebar */}
-      <aside className="w-[260px] border-r border-gray-200 bg-gray-50 flex flex-col justify-between shrink-0">
+      <aside className="print:hidden w-[260px] border-r border-gray-200 bg-gray-50 flex flex-col justify-between shrink-0">
         <div className="py-8">
           {/* Logo Section */}
           <div className="px-6 mb-12">
@@ -153,9 +132,9 @@ export default function ReceptionLayout({
       </aside>
 
       {/* Main Workspace Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto print:block print:overflow-visible">
         {/* Top Header Bar */}
-        <header className="h-20 border-b border-gray-200 bg-white px-8 flex items-center justify-between sticky top-0 z-40">
+        <header className="print:hidden h-20 border-b border-gray-200 bg-white px-8 flex items-center justify-between sticky top-0 z-40">
           <div className="flex items-center gap-6">
             <h1 className="text-sm font-bold text-gray-500 uppercase tracking-widest leading-none">
               Workspace Monitor

@@ -14,6 +14,7 @@ export interface Patient {
   chiefComplaint?: string;
   assignedDoctor?: string;
   notes?: string;
+  allergies?: string[];
   vitals?: {
     bp?: string;
     hr?: number;
@@ -35,13 +36,13 @@ export interface Question {
 
 export interface Assessment {
   patientId: number;
-  appointmentId?: number; // Stamped on creation to verify ownership, prevents stale ghost data
+  appointmentId?: number; // Stamped on creation to verify ownership, prevents stale data from another appointment
   chiefComplaint: string;
   questions: Question[];
   currentQuestionIndex?: number;
   status: "started" | "questioning" | "completed";
   summary?: CaseSummary;
-  sentToSeniorId?: string;
+  sentToSeniorId?: number;
 }
 
 export interface CaseSummary {
@@ -51,11 +52,14 @@ export interface CaseSummary {
   negatives: string[];
   clinicalNotes: string;
   riskAssessment: AcuityLevel;
+  /** Red flags detected from the answers by the safety rules (not by the model). */
+  redFlags: string[];
+  /** True when the safety rules raised the risk above what the model proposed. */
+  riskFloorApplied: boolean;
 }
 
 export interface Doctor {
-  id: string;
+  id: number;
   name: string;
-  specialty: string;
-  role: string;
+  specialization: string | null;
 }

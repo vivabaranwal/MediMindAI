@@ -74,13 +74,13 @@ class PatientAndAppointmentApiTest extends TestCase
                 ]
             ]);
 
-        $this->assertDatabaseHas('patients', [
-            'mobile' => '+919876543210',
-            'name' => 'John Doe',
-        ]);
+        // Name and mobile are encrypted at rest, so look the row up through the model (which decrypts).
+        $stored = \App\Models\Patient::findOrFail($response->json('data.id'));
+        $this->assertSame('John Doe', $stored->name);
+        $this->assertSame('+919876543210', $stored->mobile);
 
         $this->assertDatabaseHas('users', [
-            'mobile' => '+919876543210',
+            'mobile_hash' => \App\Support\BlindIndex::mobileHash('+919876543210'),
             'role' => UserRole::Patient->value,
         ]);
     }
@@ -136,6 +136,7 @@ class PatientAndAppointmentApiTest extends TestCase
             'user_id' => $doctorUser->id,
             'registration_number' => 'DOC12345',
             'specialization' => 'ENT',
+            'level' => 'junior',
             'available_days' => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
             'slot_duration_mins' => 15,
             'is_active' => true,
@@ -143,7 +144,6 @@ class PatientAndAppointmentApiTest extends TestCase
 
         $payload = [
             'patient_id' => $patient->id,
-            'doctor_id' => $doctor->id,
             'appointment_date' => date('Y-m-d', strtotime('+1 day')),
             'appointment_time' => '10:00',
             'type' => 'regular',
@@ -166,69 +166,63 @@ class PatientAndAppointmentApiTest extends TestCase
     }
 
     /**
-     * Test double booking prevention.
+     * Intake is a shared queue, not a slot calendar: two walk-ins in the same minute both reach the junior doctor.
      */
-    public function test_prevents_double_booking_same_slot(): void
+    public function test_new_appointments_always_go_to_the_junior_doctor(): void
     {
         Sanctum::actingAs($this->adminUser);
 
-        $patientA = Patient::create([
-            'name' => 'Patient A',
-            'mobile' => '+919876543210',
-        ]);
+        $makeDoctor = function (string $tag, string $level) {
+            $user = User::create([
+                'name' => "Dr {$tag}",
+                'email' => "{$tag}@medimind.test",
+                'mobile' => '+9199998' . random_int(10000, 99999),
+                'password' => bcrypt('password123'),
+                'role' => UserRole::Doctor->value,
+                'status' => 'active',
+            ]);
 
-        $patientB = Patient::create([
-            'name' => 'Patient B',
-            'mobile' => '+919876543211',
-        ]);
+            return Doctor::create([
+                'user_id' => $user->id,
+                'registration_number' => "REG-{$tag}",
+                'specialization' => 'ENT',
+                'level' => $level,
+                'is_active' => true,
+            ]);
+        };
+        $junior = $makeDoctor('junior', 'junior');
+        $senior = $makeDoctor('senior', 'senior');
 
-        $doctorUser = User::create([
-            'name' => 'Dr. Smith',
-            'email' => 'smith@medimind.test',
-            'mobile' => '+919999888877',
-            'password' => bcrypt('password123'),
-            'role' => UserRole::Doctor->value,
-            'status' => 'active',
-        ]);
+        $date = date('Y-m-d', strtotime('+1 day'));
+        foreach (['+919876543210', '+919876543211'] as $mobile) {
+            $patient = Patient::create(['name' => 'Walk In', 'mobile' => $mobile]);
 
-        $doctor = Doctor::create([
-            'user_id' => $doctorUser->id,
-            'registration_number' => 'DOC12345',
-            'specialization' => 'ENT',
-            'is_active' => true,
-        ]);
+            // A doctor_id sent by the receptionist is ignored.
+            $this->postJson('/api/appointments', [
+                'patient_id' => $patient->id,
+                'doctor_id' => $senior->id,
+                'appointment_date' => $date,
+                'appointment_time' => '10:00',
+                'type' => 'walk_in',
+                'chief_complaint' => 'Ear pain',
+            ])->assertStatus(201)->assertJsonPath('data.doctor_id', $junior->id);
+        }
 
-        $appointmentDate = date('Y-m-d', strtotime('+1 day'));
+        $this->assertSame(2, Appointment::where('doctor_id', $junior->id)->count());
+        $this->assertSame(0, Appointment::where('doctor_id', $senior->id)->count());
+    }
 
-        // Book first appointment
-        Appointment::create([
-            'patient_id' => $patientA->id,
-            'doctor_id' => $doctor->id,
-            'appointment_date' => $appointmentDate,
-            'appointment_time' => '10:00:00',
-            'slot_token' => 1,
-            'type' => 'regular',
-            'status' => 'booked',
-            'triage_level' => 'green',
-            'chief_complaint' => 'Throat pain',
-            'booked_by' => $this->adminUser->id,
-        ]);
+    public function test_booking_fails_when_no_junior_doctor_exists(): void
+    {
+        Sanctum::actingAs($this->adminUser);
+        $patient = Patient::create(['name' => 'Walk In', 'mobile' => '+919876543210']);
 
-        // Attempt duplicate booking for Patient B at the same time
-        $payload = [
-            'patient_id' => $patientB->id,
-            'doctor_id' => $doctor->id,
-            'appointment_date' => $appointmentDate,
+        $this->postJson('/api/appointments', [
+            'patient_id' => $patient->id,
+            'appointment_date' => date('Y-m-d', strtotime('+1 day')),
             'appointment_time' => '10:00',
-            'type' => 'regular',
-            'triage_level' => 'green',
             'chief_complaint' => 'Ear pain',
-        ];
-
-        $response = $this->postJson('/api/appointments', $payload);
-
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['appointment_time']);
+        ])->assertStatus(422)->assertJsonValidationErrors(['doctor_id']);
     }
 
     /**
@@ -385,8 +379,6 @@ class PatientAndAppointmentApiTest extends TestCase
      */
     public function test_can_save_clinical_assessment_and_dispatch(): void
     {
-        Sanctum::actingAs($this->adminUser);
-
         $patient = Patient::create([
             'name' => 'John Watson',
             'mobile' => '+919876543212',
@@ -405,6 +397,7 @@ class PatientAndAppointmentApiTest extends TestCase
             'user_id' => $doctorUser->id,
             'registration_number' => 'DOC99881',
             'specialization' => 'Pulmonology',
+            'level' => 'junior',
             'is_active' => true,
         ]);
 
@@ -421,8 +414,28 @@ class PatientAndAppointmentApiTest extends TestCase
             'booked_by' => $this->adminUser->id,
         ]);
 
+        $doctorUser->assignRole(UserRole::Doctor->value);
+        Sanctum::actingAs($doctorUser);
+
+        $seniorUser = User::create([
+            'name' => 'Dr. Mycroft',
+            'email' => 'mycroft@medimind.test',
+            'mobile' => '+919999888800',
+            'password' => bcrypt('password123'),
+            'role' => UserRole::Doctor->value,
+            'status' => 'active',
+        ]);
+        $senior = Doctor::create([
+            'user_id' => $seniorUser->id,
+            'registration_number' => 'DOC99882',
+            'specialization' => 'Pulmonology',
+            'level' => 'senior',
+            'is_active' => true,
+        ]);
+
         $payload = [
             'triage_level' => 'amber',
+            'doctor_id' => $senior->id,
             'chief_complaint' => 'Severe coughing with blood',
             'vitals' => [
                 'bp' => '130/85',
@@ -437,11 +450,10 @@ class PatientAndAppointmentApiTest extends TestCase
                     'answer' => 'Yes, mild chest soreness.',
                 ],
             ],
-            'soap_note' => [
-                'subjective' => 'Patient has hemoptysis for 2 days.',
-                'objective' => 'Lungs clear on auscultation.',
-                'assessment' => 'Possible bronchitis or TB.',
-                'plan' => 'Chest X-ray and sputum culture.',
+            'summary' => [
+                'subjective' => 'Patient reports hemoptysis for 2 days.',
+                'risk_level' => 'high',
+                'red_flags' => ['shortness of breath / difficulty breathing'],
             ],
         ];
 
@@ -456,12 +468,15 @@ class PatientAndAppointmentApiTest extends TestCase
             'id' => $appointment->id,
             'status' => 'in_queue',
             'triage_level' => 'amber',
-            'chief_complaint' => 'Severe coughing with blood',
         ]);
+        $this->assertSame('Severe coughing with blood', $appointment->fresh()->chief_complaint);
 
         // Verify encounter was created
         $encounter = \App\Models\Encounter::where('appointment_id', $appointment->id)->first();
         $this->assertNotNull($encounter);
+
+        // Regression: the handoff used to invent a "signed-ready" AI SOAP note from the junior summary.
+        $this->assertDatabaseMissing('soap_notes', ['encounter_id' => $encounter->id]);
 
         // Verify symptom was saved
         $this->assertDatabaseHas('symptoms', [
@@ -470,13 +485,10 @@ class PatientAndAppointmentApiTest extends TestCase
             'collected_via' => 'form',
         ]);
 
-        // Verify soap note was saved
-        $this->assertDatabaseHas('soap_notes', [
-            'encounter_id' => $encounter->id,
-            'patient_id' => $patient->id,
-            'doctor_id' => $doctor->id,
-            'subjective' => 'Patient has hemoptysis for 2 days.',
-            'objective' => 'Lungs clear on auscultation.',
-        ]);
+        // The AI intake summary and red flags are stored on the symptom record.
+        $symptom = \App\Models\Symptom::where('encounter_id', $encounter->id)->first();
+        $this->assertSame('high', $symptom->symptoms['summary']['risk_level']);
+        $this->assertSame(['shortness of breath / difficulty breathing'], $symptom->red_flags);
+        $this->assertTrue($symptom->ai_processed);
     }
 }

@@ -82,6 +82,37 @@ class ReportController extends Controller
     }
 
     /**
+     * Delete a report and everything derived from it.
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        $report = $this->reportService->getReport($id);
+        if (!$report) {
+            return response()->json(['success' => false, 'message' => 'Report not found.'], 404);
+        }
+
+        $this->reportService->deleteReport($report);
+
+        return response()->json(['success' => true, 'message' => 'Report deleted.']);
+    }
+
+    /**
+     * Re-run AI analysis (e.g. after a failure, or after the patient grants AI consent).
+     */
+    public function reanalyze(int $id): JsonResponse
+    {
+        $report = $this->reportService->getReport($id);
+        if (!$report) {
+            return response()->json(['success' => false, 'message' => 'Report not found.'], 404);
+        }
+
+        $report->update(['status' => \App\Services\Ai\ReportAnalysisService::PENDING, 'analysis_error' => null]);
+        \App\Jobs\AnalyzeReportJob::dispatch($report->id)->afterCommit();
+
+        return response()->json(['success' => true, 'data' => $report->fresh()], 202);
+    }
+
+    /**
      * Download the uploaded report file.
      */
     public function download(int $id)

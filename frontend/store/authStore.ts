@@ -1,68 +1,82 @@
 import { create } from "zustand";
-import apiClient from "@/services/apiClient";
+import apiClient, { ensureCsrfCookie } from "@/services/apiClient";
+import { toApiError } from "@/lib/errors";
+
+export type DoctorLevel = "junior" | "senior";
 
 export interface User {
   id: number;
   name: string;
-  email: string;
-  mobile: string;
+  email: string | null;
+  mobile: string | null;
   role: string;
+  /** Present only for users with a doctor profile. */
+  doctor_id: number | null;
+  /** junior (intake) or senior (SOAP and prescribing). Present only for users with a doctor profile. */
+  doctor_level?: "junior" | "senior" | null;
 }
 
 interface AuthStore {
   user: User | null;
-  token: string | null;
+  /** False until the first check of the server-side session has finished. */
+  ready: boolean;
   loading: boolean;
   error: string | null;
-  
-  // Actions
-  loginWithPassword: (email: string, password: string) => Promise<any>;
-  sendOtp: (mobile: string) => Promise<any>;
-  verifyOtp: (mobile: string, otp: string) => Promise<any>;
-  loginWithOtp: (mobile: string, otp: string) => Promise<any>;
+
+  /** Ask the server who is signed in (the session cookie is the only credential). */
+  initialize: () => Promise<void>;
+  /** Sign in with email + password. If `allowedRoles` is given, other roles are signed straight back out. */
+  loginWithPassword: (email: string, password: string, allowedRoles?: string[], requiredLevel?: DoctorLevel) => Promise<User>;
+  sendOtp: (mobile: string) => Promise<void>;
+  loginWithOtp: (mobile: string, otp: string) => Promise<User>;
   logout: () => Promise<void>;
-  initialize: () => void;
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
+let initializing: Promise<void> | null = null;
+
+export const useAuthStore = create<AuthStore>((set, get) => ({
   user: null,
-  token: null,
+  ready: false,
   loading: false,
   error: null,
 
   initialize: () => {
-    if (typeof window !== "undefined") {
-      const token = localStorage.getItem("token");
-      const userStr = localStorage.getItem("user");
-      if (token && userStr) {
-        try {
-          set({ token, user: JSON.parse(userStr) });
-        } catch {
-          // Clear invalid storage
-          localStorage.removeItem("token");
-          localStorage.removeItem("sanctum_token");
-          localStorage.removeItem("user");
-        }
-      }
-    }
+    if (get().ready) return Promise.resolve();
+    // Several guards may ask at once; share one request.
+    initializing ??= apiClient
+      .get("/user")
+      .then((res) => set({ user: res.data as User, ready: true }))
+      .catch(() => set({ user: null, ready: true })) // 401 = nobody signed in
+      .finally(() => {
+        initializing = null;
+      });
+    return initializing;
   },
 
-  loginWithPassword: async (email, password) => {
+  loginWithPassword: async (email, password, allowedRoles, requiredLevel) => {
     set({ loading: true, error: null });
     try {
-      const res = await apiClient.post("/auth/login", { email, password });
-      const data = res.data;
-      if (data.success && data.access_token) {
-        localStorage.setItem("token", data.access_token);
-        localStorage.setItem("sanctum_token", data.access_token);
-        localStorage.setItem("user", JSON.stringify(data.user));
-        set({ user: data.user, token: data.access_token, loading: false });
-        return data;
-      } else {
-        throw new Error(data.message || "Failed to log in");
+      await ensureCsrfCookie();
+      const { data } = await apiClient.post("/auth/login", { email, password });
+      const user: User = data.user;
+
+      if (allowedRoles && !allowedRoles.includes(user.role)) {
+        // Valid credentials, wrong portal: don't keep a session for it.
+        await apiClient.post("/auth/logout").catch(() => undefined);
+        throw new Error("This account does not have access to this portal.");
       }
-    } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || "Authorization Failed";
+
+      // A doctor belongs to one portal. (Admins may enter either.)
+      if (requiredLevel && user.role === "doctor" && user.doctor_level !== requiredLevel) {
+        await apiClient.post("/auth/logout").catch(() => undefined);
+        const other = requiredLevel === "senior" ? "junior" : "senior";
+        throw new Error(`This portal is for ${requiredLevel} doctors. Please use the ${other} doctor portal.`);
+      }
+
+      set({ user, ready: true, loading: false });
+      return user;
+    } catch (err) {
+      const msg = toApiError(err, "Sign-in failed.").message;
       set({ error: msg, loading: false });
       throw new Error(msg);
     }
@@ -71,24 +85,11 @@ export const useAuthStore = create<AuthStore>((set) => ({
   sendOtp: async (mobile) => {
     set({ loading: true, error: null });
     try {
-      const res = await apiClient.post("/auth/send-otp", { mobile });
+      await ensureCsrfCookie();
+      await apiClient.post("/auth/send-otp", { mobile });
       set({ loading: false });
-      return res.data;
-    } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || "Failed to send OTP";
-      set({ error: msg, loading: false });
-      throw new Error(msg);
-    }
-  },
-
-  verifyOtp: async (mobile, otp) => {
-    set({ loading: true, error: null });
-    try {
-      const res = await apiClient.post("/auth/verify-otp", { mobile, otp });
-      set({ loading: false });
-      return res.data;
-    } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || "Invalid or expired OTP";
+    } catch (err) {
+      const msg = toApiError(err, "Could not send a code.").message;
       set({ error: msg, loading: false });
       throw new Error(msg);
     }
@@ -97,19 +98,12 @@ export const useAuthStore = create<AuthStore>((set) => ({
   loginWithOtp: async (mobile, otp) => {
     set({ loading: true, error: null });
     try {
-      const res = await apiClient.post("/auth/login", { mobile, otp });
-      const data = res.data;
-      if (data.success && data.access_token) {
-        localStorage.setItem("token", data.access_token);
-        localStorage.setItem("sanctum_token", data.access_token);
-        localStorage.setItem("user", JSON.stringify(data.user));
-        set({ user: data.user, token: data.access_token, loading: false });
-        return data;
-      } else {
-        throw new Error(data.message || "Failed to log in");
-      }
-    } catch (err: any) {
-      const msg = err.response?.data?.message || err.message || "Authorization Failed";
+      await ensureCsrfCookie();
+      const { data } = await apiClient.post("/auth/login", { mobile, otp });
+      set({ user: data.user, ready: true, loading: false });
+      return data.user as User;
+    } catch (err) {
+      const msg = toApiError(err, "Invalid or expired code.").message;
       set({ error: msg, loading: false });
       throw new Error(msg);
     }
@@ -119,12 +113,9 @@ export const useAuthStore = create<AuthStore>((set) => ({
     try {
       await apiClient.post("/auth/logout");
     } catch {
-      // Ignore logout errors
+      // The session may already be gone; clearing local state is what matters.
     } finally {
-      localStorage.removeItem("token");
-      localStorage.removeItem("sanctum_token");
-      localStorage.removeItem("user");
-      set({ user: null, token: null });
+      set({ user: null, ready: true });
     }
   },
 }));

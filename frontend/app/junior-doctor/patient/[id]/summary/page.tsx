@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useJuniorDoctorStore, mockDoctors } from "@/store/juniorDoctorStore";
+import { useJuniorDoctorStore } from "@/store/juniorDoctorStore";
+import { Alert } from "@/components/ui/Alert";
 import { PatientHeader } from "@/components/junior-doctor/PatientHeader";
 import { AssessmentWorkspace } from "@/components/junior-doctor/AssessmentWorkspace";
 import { SummaryCard } from "@/components/junior-doctor/SummaryCard";
@@ -20,12 +21,16 @@ interface SummaryPageProps {
 
 export default function SummaryPage({ params }: SummaryPageProps) {
   const router = useRouter();
-  const { patients, assessments, sendToSenior } = useJuniorDoctorStore();
+  const { patients, assessments, sendToSenior, doctors, fetchDoctors, updateSummary } = useJuniorDoctorStore();
   const patientId = Number(params.id);
   const patient = patients.find((p) => p.id === patientId);
   const assessment = assessments[patientId];
 
-  const [localSummary, setLocalSummary] = useState<CaseSummary | null>(assessment?.summary || null);
+  const [doctorsError, setDoctorsError] = useState("");
+
+  useEffect(() => {
+    fetchDoctors().catch((err) => setDoctorsError(err instanceof Error ? err.message : "Could not load doctors."));
+  }, [fetchDoctors]);
 
   if (!patient || !assessment || !assessment.summary) {
     return (
@@ -39,23 +44,14 @@ export default function SummaryPage({ params }: SummaryPageProps) {
     );
   }
 
+  // Edits are written to the store immediately, so what the doctor sees is what gets sent.
   const handleUpdateSummaryField = (field: keyof CaseSummary, value: string | string[]) => {
-    const activeSummary = localSummary || assessment.summary;
-    if (!activeSummary) return;
-    setLocalSummary({
-      ...activeSummary,
-      [field]: value,
-    });
+    updateSummary(patientId, { ...assessment.summary!, [field]: value });
   };
 
-  const handleSendToSenior = async (doctorId: string) => {
-    try {
-      await sendToSenior(patientId, doctorId);
-      router.push("/junior-doctor/queue");
-    } catch (err) {
-      console.error("Specialist handoff failed:", err);
-      alert("Handoff failed. Please check network/database logs.");
-    }
+  const handleSendToSenior = async (doctorId: number) => {
+    await sendToSenior(patientId, doctorId); // errors surface in the panel
+    router.push("/junior-doctor/queue");
   };
 
   const isSent = patient.status === "Completed";
@@ -70,8 +66,13 @@ export default function SummaryPage({ params }: SummaryPageProps) {
       <AssessmentWorkspace>
         {/* Left Area (8 cols): SOAP Summary Card */}
         <div className="lg:col-span-8 space-y-6">
+          {assessment.summary.redFlags.length > 0 && (
+            <Alert type="error" titleText="Red flags detected">
+              {assessment.summary.redFlags.join("; ")}.{assessment.summary.riskFloorApplied ? " Risk was raised by the safety rules." : ""}
+            </Alert>
+          )}
           <SummaryCard
-            summary={localSummary || assessment.summary}
+            summary={assessment.summary}
             onUpdateSummaryField={handleUpdateSummaryField}
             readOnly={isSent}
           />
@@ -90,8 +91,13 @@ export default function SummaryPage({ params }: SummaryPageProps) {
 
         {/* Right Area (4 cols): Dispatch & Timeline */}
         <div className="lg:col-span-4 space-y-6">
+          {doctorsError && (
+            <Alert type="error" titleText="Doctor list unavailable">
+              {doctorsError}
+            </Alert>
+          )}
           <SendCasePanel
-            doctors={mockDoctors}
+            doctors={doctors}
             onSend={handleSendToSenior}
             className={isSent ? "opacity-90 pointer-events-none" : ""}
           />

@@ -21,6 +21,11 @@ class EncounterService
     /**
      * Get active encounters for a specific doctor.
      */
+    public function getEncountersForDoctor(int $doctorId, string $completed = 'none'): Collection
+    {
+        return $this->encounterRepository->getEncountersForDoctor($doctorId, $completed);
+    }
+
     public function getActiveEncountersForDoctor(int $doctorId): Collection
     {
         return $this->encounterRepository->getActiveEncountersForDoctor($doctorId);

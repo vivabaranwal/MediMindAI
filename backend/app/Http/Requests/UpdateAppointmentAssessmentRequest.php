@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateAppointmentAssessmentRequest extends FormRequest
 {
@@ -21,16 +22,19 @@ class UpdateAppointmentAssessmentRequest extends FormRequest
     {
         return [
             'triage_level' => 'required|string',
+            // The reviewing senior doctor the junior chooses at handoff
+            'doctor_id' => ['required', 'integer', Rule::exists('doctors', 'id')->where('level', 'senior')->where('is_active', true)],
             'chief_complaint' => 'required|string',
             // Change these to allow nulls if the form isn't fully filled out
             'vitals.bp' => 'nullable|string',
             'vitals.hr' => 'nullable|numeric',
-            'vitals.temp' => 'nullable|numeric',
+            // Clients send either 98.6 or "98.6 °F"; EncounterContextBuilder normalises on read.
+            'vitals.temp' => ['nullable', 'regex:/^\s*-?\d+(\.\d+)?\s*(°?\s*[FfCc])?\s*$/'],
             'vitals.spo2' => 'nullable|numeric',
             
-            // Ensure soap_note structure is handled if present
-            'soap_note' => 'nullable|array',
             'symptoms' => 'nullable|array',
+            // AI intake summary produced during the junior assessment (risk, red flags, notes)
+            'summary' => 'nullable|array',
         ];
     }
 }

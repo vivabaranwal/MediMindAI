@@ -12,6 +12,10 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(
+            \App\Contracts\SmsGateway::class,
+            \App\Services\Sms\LogSmsGateway::class
+        );
+        $this->app->bind(
             \App\Repositories\Contracts\PatientRepositoryInterface::class,
             \App\Repositories\PatientRepository::class
         );

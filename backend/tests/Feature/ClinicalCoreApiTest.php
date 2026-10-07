@@ -111,11 +111,8 @@ class ClinicalCoreApiTest extends TestCase
             ->assertJsonPath('data.subjective', 'Dry cough for 2 weeks.')
             ->assertJsonPath('data.doctor_signed', false);
 
-        $this->assertDatabaseHas('soap_notes', [
-            'encounter_id' => $this->encounter->id,
-            'subjective' => 'Dry cough for 2 weeks.',
-            'doctor_signed' => false,
-        ]);
+        $this->assertDatabaseHas('soap_notes', ['encounter_id' => $this->encounter->id, 'doctor_signed' => false]);
+        $this->assertSame('Dry cough for 2 weeks.', \App\Models\SoapNote::where('encounter_id', $this->encounter->id)->first()->subjective);
     }
 
     /**

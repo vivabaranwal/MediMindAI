@@ -14,6 +14,7 @@ use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -80,11 +81,15 @@ class ReportsAndBriefsApiTest extends TestCase
             'report_type' => 'blood_test',
         ];
 
+        Queue::fake();
+
         $response = $this->postJson('/api/reports/upload', $payload);
 
         $response->assertStatus(201)
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.status', 'pending_analysis');
+
+        Queue::assertPushed(\App\Jobs\AnalyzeReportJob::class);
 
         $report = Report::first();
         $this->assertNotNull($report);
@@ -164,23 +169,25 @@ class ReportsAndBriefsApiTest extends TestCase
     }
 
     /**
-     * Test AI Doctor Brief regeneration with faked HTTP gateway.
+     * Brief generation against the engine contract (consent granted).
      */
     public function test_can_regenerate_ai_brief_successfully(): void
     {
         Sanctum::actingAs($this->doctorUser);
+        config(['services.fastapi.secret' => 'unit-test-secret-0123456789', 'services.fastapi.url' => 'http://engine.test']);
+        app(\App\Services\Ai\ConsentService::class)->record($this->patient, 'ai_assistance', true);
 
-        // Fake FastAPI internal generate-brief endpoint
         Http::fake([
-            '*/internal/generate-brief' => Http::response([
+            'engine.test/internal/v1/briefs' => Http::response([
                 'brief' => 'The patient Holmes presents with chronic cough...',
                 'risk_level' => 'medium',
+                'risk_rationale' => 'Persistent cough.',
+                'risk_floor_applied' => false,
+                'red_flags' => [],
                 'suggested_questions' => ['How long has the cough persisted?'],
-                'similar_cases' => [],
-                'model_used' => 'gemini-1.5-pro',
-                'tokens_used' => 1200,
-                'generation_time_ms' => 450,
-            ], 200)
+                'disclaimer' => 'AI-generated',
+                'meta' => ['model' => 'gpt-4o-mini', 'input_tokens' => 800, 'output_tokens' => 400, 'latency_ms' => 450, 'prompt_version' => 'v1'],
+            ], 200),
         ]);
 
         $response = $this->postJson("/api/ai/briefs/{$this->encounter->id}/regenerate");
@@ -193,6 +200,9 @@ class ReportsAndBriefsApiTest extends TestCase
         $this->assertDatabaseHas('ai_briefs', [
             'encounter_id' => $this->encounter->id,
             'risk_level' => 'medium',
+            'llm_model_used' => 'gpt-4o-mini',
+            'token_count' => 1200,
+            'generation_time_ms' => 450,
         ]);
     }
 }
