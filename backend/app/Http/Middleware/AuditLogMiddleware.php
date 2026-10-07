@@ -18,8 +18,10 @@ class AuditLogMiddleware
         $response = $next($request);
 
         // Only log write/modifying requests for authenticated users
-        if (Auth::check() && in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'])) {
-            $user = Auth::user();
+        // $request->user() resolves whichever guard authenticated the request (Sanctum token),
+        // whereas Auth::check() only consults the default session guard.
+        $user = $request->user();
+        if ($user && in_array($request->method(), ['POST', 'PUT', 'PATCH', 'DELETE'])) {
             
             // Exclude logout from resource modification logging
             if ($request->is('api/auth/logout')) {
@@ -50,8 +52,12 @@ class AuditLogMiddleware
                 }
             }
 
-            // Exclude sensitive inputs
-            $newValues = $request->except(['password', 'password_confirmation', 'otp', 'token']);
+            // Record WHICH fields were submitted, never their values: payloads are clinical text and
+            // credentials, and the audit trail must not become a second copy of patient data.
+            $newValues = array_values(array_diff(
+                array_keys($request->except(['password', 'password_confirmation', 'otp', 'token'])),
+                ['_token']
+            ));
 
             AuditLog::create([
                 'user_id' => $user->id,
@@ -59,7 +65,7 @@ class AuditLogMiddleware
                 'resource_type' => $resourceType,
                 'resource_id' => is_numeric($resourceId) ? (int)$resourceId : null,
                 'old_values' => null,
-                'new_values' => empty($newValues) ? $newValues : null,
+                'new_values' => $newValues ?: null,
                 'ip_address' => $request->ip(),
                 'user_agent' => $request->userAgent(),
             ]);

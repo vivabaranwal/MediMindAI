@@ -23,7 +23,6 @@ class StoreAppointmentRequest extends FormRequest
     {
         return [
             'patient_id' => ['required', 'integer', 'exists:patients,id'],
-            'doctor_id' => ['required', 'integer', 'exists:doctors,id'],
             'appointment_date' => ['required', 'date', 'after_or_equal:today'],
             'appointment_time' => ['required', 'string', 'regex:/^[0-2]\d:[0-5]\d$/'],
             'type' => ['sometimes', 'string', 'in:regular,urgent,walk_in,follow_up'],

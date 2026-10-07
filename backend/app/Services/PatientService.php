@@ -21,9 +21,13 @@ class PatientService
     /**
      * Onboard a new patient.
      */
-    public function onboardPatient(array $data): Patient
+    public function onboardPatient(array $data, ?string $ip = null): Patient
     {
         $mobile = $data['mobile'];
+        $aiConsent = $data['ai_consent'] ?? null;
+        $dataConsent = $data['data_consent'] ?? null;
+        $allergies = $data['allergies'] ?? [];
+        unset($data['ai_consent'], $data['data_consent'], $data['allergies']);
 
         // 1. Check for duplicate patient record
         $duplicate = $this->patientRepository->checkDuplicate($data['name'], $mobile);
@@ -34,11 +38,11 @@ class PatientService
         }
 
         // 2. Perform transactional user + patient creation
-        return DB::transaction(function () use ($data, $mobile) {
+        return DB::transaction(function () use ($data, $mobile, $aiConsent, $dataConsent, $allergies, $ip) {
             // Create user account for portal access
             $user = User::create([
                 'name' => $data['name'],
-                'email' => $data['email'] ?? null,
+                'email' => null, // the patient's email lives (encrypted) on the patient record only
                 'mobile' => $mobile,
                 'password' => null,
                 'role' => UserRole::Patient->value,
@@ -50,7 +54,18 @@ class PatientService
             // Map user relation ID
             $data['user_id'] = $user->id;
 
-            return $this->patientRepository->create($data);
+            $patient = $this->patientRepository->create($data);
+
+            $consents = app(\App\Services\Ai\ConsentService::class);
+            if ($dataConsent !== null) {
+                $consents->record($patient, 'data_collection', (bool) $dataConsent, $ip);
+            }
+            if ($aiConsent !== null) {
+                $consents->record($patient, \App\Services\Ai\ConsentService::AI, (bool) $aiConsent, $ip);
+            }
+            $this->replaceAllergies($patient, $allergies);
+
+            return $patient->load('allergies');
         });
     }
 
@@ -72,7 +87,14 @@ class PatientService
             return false;
         }
 
-        return DB::transaction(function () use ($patient, $data) {
+        $allergies = $data['allergies'] ?? null;
+        unset($data['allergies']);
+
+        return DB::transaction(function () use ($patient, $data, $allergies) {
+            if ($allergies !== null) {
+                $this->replaceAllergies($patient, $allergies);
+            }
+
             $user = $patient->user;
             if ($user) {
                 $userUpdates = [];
@@ -88,6 +110,21 @@ class PatientService
 
             return $patient->update($data);
         });
+    }
+
+    /**
+     * The submitted list is the full, current allergy list for the patient.
+     */
+    private function replaceAllergies(Patient $patient, array $allergies): void
+    {
+        $patient->allergies()->delete();
+        foreach ($allergies as $a) {
+            $patient->allergies()->create([
+                'allergen' => trim($a['allergen']),
+                'reaction' => $a['reaction'] ?? null,
+                'severity' => $a['severity'] ?? null,
+            ]);
+        }
     }
 
     /**

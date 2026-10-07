@@ -8,6 +8,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } f
 import { RiskBadge } from "@/components/senior-doctor/RiskBadge";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/LoadingState";
+import { Alert } from "@/components/ui/Alert";
 
 type TabStatus = "All" | "Waiting" | "In Review" | "Completed";
 
@@ -16,6 +17,7 @@ export default function QueuePage() {
   const { user, initialize } = useAuthStore();
   const [activeTab, setActiveTab] = useState<TabStatus>("All");
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     initialize();
@@ -23,12 +25,22 @@ export default function QueuePage() {
 
   useEffect(() => {
     const loadData = async () => {
+      if (!user) return;
+      if (!user.doctor_id) {
+        setLoadError("This account has no doctor profile, so there is no queue to show.");
+        setIsLoading(false);
+        return;
+      }
       setIsLoading(true);
-      const doctorId = (user?.email === "doctor2@medimind.ai" || user?.id === 4) ? 2 : 1;
-      await fetchDashboardData(doctorId);
-      setIsLoading(false);
+      setLoadError("");
+      try {
+        await fetchDashboardData(user.doctor_id);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Could not load the queue.");
+      } finally {
+        setIsLoading(false);
+      }
     };
-
     loadData();
   }, [user, fetchDashboardData]);
 
@@ -42,6 +54,15 @@ export default function QueuePage() {
       </div>
     );
   }
+
+  if (loadError) {
+    return (
+      <Alert type="error" titleText="Could not load the queue">
+        {loadError}
+      </Alert>
+    );
+  }
+
 
   const filtered = activeTab === "All"
     ? patients

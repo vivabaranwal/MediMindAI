@@ -34,6 +34,14 @@ class UpdatePatientRequest extends FormRequest
             'emergency_contact_name' => ['nullable', 'string', 'max:255'],
             'emergency_contact_mobile' => ['nullable', 'string', 'regex:/^\+?[1-9]\d{1,14}$/'],
             'is_active' => ['sometimes', 'boolean'],
+            'medical_history' => ['nullable', 'array', 'max:50'],
+            'medical_history.*' => ['string', 'max:200'],
+            'current_medications' => ['nullable', 'array', 'max:50'],
+            'current_medications.*' => ['string', 'max:200'],
+            'allergies' => ['nullable', 'array', 'max:30'],
+            'allergies.*.allergen' => ['required', 'string', 'max:100'],
+            'allergies.*.reaction' => ['nullable', 'string', 'max:200'],
+            'allergies.*.severity' => ['nullable', 'string', 'in:mild,moderate,severe'],
         ];
     }
 }

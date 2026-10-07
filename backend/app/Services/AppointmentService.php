@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Appointment;
+use App\Models\Doctor;
 use App\Models\Encounter;
 use App\Models\Symptom;
 use App\Models\SoapNote;
@@ -27,22 +28,11 @@ class AppointmentService
      */
     public function bookAppointment(array $data, int $bookedByUserId): Appointment
     {
-        $doctorId = $data['doctor_id'];
+        // Every new patient goes to the junior doctor first; the junior picks the senior at handoff.
+        $doctorId = $this->junior()->id;
+        $data['doctor_id'] = $doctorId;
         $date = $data['appointment_date'];
         $time = Carbon::parse($data['appointment_time'])->format('H:i:s');
-
-        // 1. Prevent double-booking for the doctor
-        $conflict = Appointment::where('doctor_id', $doctorId)
-            ->whereDate('appointment_date', $date)
-            ->whereTime('appointment_time', $time)
-            ->whereNotIn('status', ['cancelled'])
-            ->exists();
-
-        if ($conflict) {
-            throw ValidationException::withMessages([
-                'appointment_time' => ['This slot is already booked for the selected doctor.'],
-            ]);
-        }
 
         // 2. Generate a queue slot token (token sequence for doctor on that date)
         $tokenCount = Appointment::where('doctor_id', $doctorId)
@@ -58,6 +48,29 @@ class AppointmentService
 
         // 4. Create and return
         return $this->appointmentRepository->create($data);
+    }
+
+    /**
+     * The junior doctor who takes new intakes: the active junior with the fewest open cases today.
+     */
+    protected function junior(): Doctor
+    {
+        $junior = Doctor::where('level', Doctor::LEVEL_JUNIOR)
+            ->where('is_active', true)
+            ->withCount(['appointments as open_cases' => fn ($q) => $q
+                ->whereDate('appointment_date', Carbon::today())
+                ->whereNotIn('status', ['completed', 'cancelled', 'no_show'])])
+            ->orderBy('open_cases')
+            ->orderBy('id')
+            ->first();
+
+        if (! $junior) {
+            throw ValidationException::withMessages([
+                'doctor_id' => ['No junior doctor is available to take this patient.'],
+            ]);
+        }
+
+        return $junior;
     }
 
     /**
@@ -79,7 +92,7 @@ class AppointmentService
                 ELSE 3 
             END ASC")
             ->orderBy('appointment_time', 'asc')
-            ->with('patient')
+            ->with(['patient.allergies', 'doctor.user'])
             ->get();
     }
 
@@ -137,9 +150,9 @@ class AppointmentService
      */
     public function saveAssessment(int $id, array $data): Appointment
     {
+        // Identifiers only: the payload is clinical text and must not reach the logs.
         \Illuminate\Support\Facades\Log::info('[AppointmentService] saveAssessment initiated', [
             'appointment_id' => $id,
-            'payload' => $data
         ]);
 
         $appointment = $this->appointmentRepository->find($id);
@@ -150,6 +163,12 @@ class AppointmentService
 
         try {
             DB::transaction(function () use ($appointment, $data) {
+                // 0. Hand the case to the chosen reviewing doctor, if one was selected
+                if (!empty($data['doctor_id']) && (int) $data['doctor_id'] !== (int) $appointment->doctor_id) {
+                    $appointment->update(['doctor_id' => $data['doctor_id']]);
+                    Encounter::where('appointment_id', $appointment->id)->update(['doctor_id' => $data['doctor_id']]);
+                }
+
                 // 1. Idempotently find or create the Encounter associated with this appointment
                 $encounter = Encounter::firstOrCreate([
                     'appointment_id' => $appointment->id,
@@ -181,31 +200,16 @@ class AppointmentService
                     'patient_id' => $appointment->patient_id,
                     'collected_via' => 'form',
                     'symptoms' => [
-                        'vitals' => $data['vitals'],
-                        'questions' => $data['symptoms'],
+                        'vitals' => $data['vitals'] ?? null,
+                        'questions' => $data['symptoms'] ?? [],
+                        'summary' => $data['summary'] ?? null,
                     ],
-                    'red_flags' => [],
+                    'red_flags' => $data['summary']['red_flags'] ?? [],
                     'transcription' => $data['chief_complaint'] ?? '',
-                    'ai_processed' => true,
+                    'ai_processed' => !empty($data['summary']),
                 ]);
 
                 \Illuminate\Support\Facades\Log::info('[AppointmentService] Symptom record updated/created', ['symptom_id' => $symptom->id]);
-
-                // 4. Save/Update SoapNote record matching encounter_id
-                $soapNote = SoapNote::updateOrCreate([
-                    'encounter_id' => $encounter->id,
-                ], [
-                    'patient_id' => $appointment->patient_id,
-                    'doctor_id' => $appointment->doctor_id,
-                    'subjective' => $data['soap_note']['subjective'] ?? '',
-                    'objective' => $data['soap_note']['objective'] ?? '',
-                    'assessment' => $data['soap_note']['assessment'] ?? '',
-                    'plan' => $data['soap_note']['plan'] ?? '',
-                    'is_ai_generated' => true,
-                    'doctor_signed' => false,
-                ]);
-
-                \Illuminate\Support\Facades\Log::info('[AppointmentService] SoapNote record updated/created', ['soap_note_id' => $soapNote->id]);
             });
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('[AppointmentService] Transaction failed: ' . $e->getMessage(), [

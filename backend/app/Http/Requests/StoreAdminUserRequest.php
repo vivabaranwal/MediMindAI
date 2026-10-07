@@ -6,9 +6,12 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class StoreAdminUserRequest extends FormRequest
 {
+    /**
+     * Only a super admin may grant the super_admin role.
+     */
     public function authorize(): bool
     {
-        return true;
+        return $this->input('role') !== 'super_admin' || (bool) $this->user()?->hasRole('super_admin');
     }
 
     public function rules(): array
@@ -16,7 +19,7 @@ class StoreAdminUserRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
-            'mobile' => ['required', 'string', 'unique:users,mobile'],
+            'mobile' => ['required', 'string', new \App\Rules\UniqueMobile()],
             'password' => ['required', 'string', 'min:8'],
             'role' => ['required', 'string', 'in:super_admin,clinic_admin,doctor,front_desk,patient'],
             'status' => ['nullable', 'string', 'in:active,inactive'],

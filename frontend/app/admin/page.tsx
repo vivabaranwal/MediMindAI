@@ -1,153 +1,173 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/Card";
-import { Badge, BadgeVariant } from "@/components/ui/Badge";
+import { Alert } from "@/components/ui/Alert";
+import { Spinner } from "@/components/ui/LoadingState";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@/components/ui/Table";
+import apiClient from "@/services/apiClient";
+import { toApiError } from "@/lib/errors";
 
-const initialAuditLogs = [
-  { id: 1, time: "2026-06-15 12:40", user: "Viva Baranwal", role: "Reception", action: "Registered patient Ramesh Sharma (MM-2026-00045)", ip: "192.168.10.45", security: "green" },
-  { id: 2, time: "2026-06-15 12:42", user: "Viva Baranwal", role: "Reception", action: "Uploaded diagnostic report Audiology_Report_2026.pdf", ip: "192.168.10.45", security: "green" },
-  { id: 3, time: "2026-06-15 12:44", user: "Dr. Amit Pathak", role: "Junior Resident", action: "Transcribed clinical dictation brief (Whisper AI)", ip: "192.168.10.51", security: "green" },
-  { id: 4, time: "2026-06-15 12:45", user: "Dr. Alok Verma", role: "Senior Otologist", action: "Finalized consult SOAP & Prescription for Ramesh Sharma", ip: "192.168.10.104", security: "green" },
-];
+interface Overview {
+  active_users: number;
+  staff_by_role: Record<string, number>;
+  patients: number;
+  appointments_today: number;
+  reports_by_status: Record<string, number>;
+  reports_needing_attention: number;
+  audit_events_24h: number;
+}
+
+interface AuditRow {
+  id: number;
+  time: string | null;
+  user: string | null;
+  role: string | null;
+  action: string;
+  resource: string | null;
+  resource_id: number | null;
+  fields: string[] | null;
+  ip: string | null;
+}
+
+const REPORT_STATUS_LABEL: Record<string, string> = {
+  pending_analysis: "Queued",
+  analyzing: "Analysing",
+  analyzed: "Analysed",
+  failed: "Failed",
+  not_analyzed: "Not analysed (no AI consent)",
+};
 
 export default function AdminDashboardPage() {
-  const logs = initialAuditLogs;
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [logs, setLogs] = useState<AuditRow[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const [o, l] = await Promise.all([apiClient.get("/admin/overview"), apiClient.get("/admin/audit-logs", { params: { per_page: 25 } })]);
+        if (!active) return;
+        setOverview(o.data.data);
+        setLogs(l.data.data);
+      } catch (err) {
+        if (active) setError(toApiError(err, "Could not load the admin overview.").message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 space-y-4">
+        <Spinner />
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Loading system overview...</span>
+      </div>
+    );
+  }
+
+  const kpis: [string, number | string, string][] = overview
+    ? [
+        ["Active Users", overview.active_users, "text-gray-600"],
+        ["Registered Patients", overview.patients, "text-gray-600"],
+        ["Appointments Today", overview.appointments_today, "text-clinical-blue"],
+        ["Reports Needing Attention", overview.reports_needing_attention, overview.reports_needing_attention > 0 ? "text-clinical-amber" : "text-clinical-green"],
+      ]
+    : [];
 
   return (
     <div className="space-y-8">
-      {/* Structural Page Header */}
       <div className="border-b border-gray-200 pb-6 mb-6">
-        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1">
-          Infrastructure Operations
-        </span>
-        <h2 className="text-2xl font-bold text-gray-600 uppercase tracking-tight">
-          System Diagnostics & Audits
-        </h2>
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-1">Operations</span>
+        <h2 className="text-2xl font-bold text-gray-600 uppercase tracking-tight">System Overview &amp; Audit Trail</h2>
       </div>
 
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="border border-gray-300">
-          <div className="space-y-1">
-            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-              Active Users
-            </span>
-            <p className="text-4xl font-bold text-gray-600 leading-none">14</p>
-          </div>
-        </Card>
+      {error && (
+        <Alert type="error" titleText="Could not load data">
+          {error}
+        </Alert>
+      )}
 
-        <Card className="border border-gray-300">
-          <div className="space-y-1">
-            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-              System CPU Load
-            </span>
-            <p className="text-4xl font-bold text-clinical-blue leading-none">12%</p>
+      {overview && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {kpis.map(([label, value, color]) => (
+              <Card key={label} className="border border-gray-300">
+                <div className="space-y-1">
+                  <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">{label}</span>
+                  <p className={`text-4xl font-bold leading-none ${color}`}>{value}</p>
+                </div>
+              </Card>
+            ))}
           </div>
-        </Card>
 
-        <Card className="border border-gray-300">
-          <div className="space-y-1">
-            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-              API Errors (24h)
-            </span>
-            <p className="text-4xl font-bold text-clinical-green leading-none">0</p>
-          </div>
-        </Card>
-
-        <Card className="border border-gray-300">
-          <div className="space-y-1">
-            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">
-              Database Status
-            </span>
-            <p className="text-xl font-bold text-clinical-green uppercase leading-tight mt-1">
-              HEALTHY / ONLINE
-            </p>
-          </div>
-        </Card>
-      </div>
-
-      {/* Main Structural Layout */}
-      <div className="clinical-grid">
-        {/* Left Column (8 cols): Activity Audit Logs */}
-        <div className="col-span-12 lg:col-span-8 space-y-8">
-          <Card titleText="System Session Audit Logs" className="border border-gray-300">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHeaderCell className="w-[140px]">Timestamp</TableHeaderCell>
-                  <TableHeaderCell className="w-[120px]">User</TableHeaderCell>
-                  <TableHeaderCell className="w-[120px]">Role</TableHeaderCell>
-                  <TableHeaderCell>Action Performed</TableHeaderCell>
-                  <TableHeaderCell className="w-[110px]">IP Address</TableHeaderCell>
-                  <TableHeaderCell className="w-[80px] text-right">Audit</TableHeaderCell>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {logs.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell className="font-mono text-xs font-bold text-gray-400">{log.time}</TableCell>
-                    <TableCell className="font-bold text-gray-650">{log.user}</TableCell>
-                    <TableCell className="font-semibold text-xs text-gray-500 uppercase tracking-wider">{log.role}</TableCell>
-                    <TableCell className="text-sm font-medium">{log.action}</TableCell>
-                    <TableCell className="font-mono text-xs font-semibold text-gray-500">{log.ip}</TableCell>
-                    <TableCell className="text-right">
-                      <Badge variant={log.security as BadgeVariant}>Passed</Badge>
-                    </TableCell>
-                  </TableRow>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card titleText="Reports by status" className="border border-gray-300">
+              <ul className="space-y-2 text-sm text-gray-600">
+                {Object.entries(overview.reports_by_status).length === 0 && <li className="text-gray-400 text-xs">No reports uploaded.</li>}
+                {Object.entries(overview.reports_by_status).map(([status, total]) => (
+                  <li key={status} className="flex justify-between border-b border-gray-150 pb-1.5 last:border-0">
+                    <span>{REPORT_STATUS_LABEL[status] ?? status}</span>
+                    <span className="font-bold">{total}</span>
+                  </li>
                 ))}
-              </TableBody>
-            </Table>
-          </Card>
-        </div>
+              </ul>
+            </Card>
 
-        {/* Right Column (4 cols): System health alerts & maintenance schedules */}
-        <div className="col-span-12 lg:col-span-4 space-y-8 text-left">
-          {/* Infrastructure Alerts */}
-          <Card titleText="Infrastructure Alerts" className="border border-gray-300">
-            <div className="space-y-4">
-              <div className="border-l-4 border-clinical-blue bg-[#F0EDFF] p-4 rounded-[4px] space-y-1">
-                <span className="text-[10px] text-clinical-blue font-bold uppercase tracking-wider block">
-                  STORAGE NODE CHECK
-                </span>
-                <p className="text-xs font-bold text-gray-650">S3 MinIO Bucket: Healthy</p>
-                <p className="text-xs text-gray-500 font-medium leading-relaxed">
-                  Available space: 840 GB. Backup configurations validated successfully.
-                </p>
-              </div>
+            <Card titleText="Active staff by role" className="border border-gray-300">
+              <ul className="space-y-2 text-sm text-gray-600">
+                {Object.entries(overview.staff_by_role).map(([role, total]) => (
+                  <li key={role} className="flex justify-between border-b border-gray-150 pb-1.5 last:border-0">
+                    <span className="uppercase tracking-wider text-xs font-semibold">{role.replace("_", " ")}</span>
+                    <span className="font-bold">{total}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </div>
+        </>
+      )}
 
-              <div className="border-l-4 border-clinical-green bg-[#F0F8F4] p-4 rounded-[4px] space-y-1">
-                <span className="text-[10px] text-clinical-green font-bold uppercase tracking-wider block">
-                  FASTAPI GATEWAY RUNNING
-                </span>
-                <p className="text-xs font-bold text-gray-650">LangGraph Agents Gateway</p>
-                <p className="text-xs text-gray-500 font-medium leading-relaxed">
-                  All 9 LangGraph agents loaded. Average inference latency: 420ms.
-                </p>
-              </div>
-            </div>
-          </Card>
-
-          {/* Maintenance schedules */}
-          <Card titleText="Upcoming Schedules" className="border border-gray-300">
-            <div className="space-y-4 text-xs text-gray-600 leading-relaxed uppercase font-semibold tracking-wide">
-              <div className="border-b border-gray-200 pb-3">
-                <span className="text-gray-450 block text-[10px] mb-1">WEEKLY BACKUP RUNS</span>
-                <p className="text-gray-650 normal-case font-normal text-sm">
-                  Full PostgreSQL & S3 MinIO storage dump scheduled for Sunday at 02:00 AM IST.
-                </p>
-              </div>
-
-              <div className="border-b border-gray-200 pb-3">
-                <span className="text-gray-450 block text-[10px] mb-1">SECURITY ENGINE PATCHES</span>
-                <p className="text-gray-650 normal-case font-normal text-sm">
-                  Laravel 12 point security upgrades slated for implementation next Tuesday.
-                </p>
-              </div>
-            </div>
-          </Card>
-        </div>
-      </div>
+      <Card titleText={`Recent write activity${overview ? ` (${overview.audit_events_24h} in the last 24h)` : ""}`} className="border border-gray-300">
+        <p className="text-[11px] text-gray-400 mb-3 normal-case">
+          Every create, update and delete is recorded with who did it and which fields were submitted. Field values are never logged.
+        </p>
+        {logs.length === 0 ? (
+          <p className="text-xs text-gray-450 text-center py-6 font-semibold uppercase tracking-wider">No activity recorded yet.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Time</TableHeaderCell>
+                <TableHeaderCell>User</TableHeaderCell>
+                <TableHeaderCell>Action</TableHeaderCell>
+                <TableHeaderCell>Fields</TableHeaderCell>
+                <TableHeaderCell>IP</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {logs.map((l) => (
+                <TableRow key={l.id}>
+                  <TableCell className="whitespace-nowrap text-gray-500">{l.time}</TableCell>
+                  <TableCell>
+                    <span className="font-semibold text-gray-600">{l.user ?? "—"}</span>
+                    <span className="block text-[10px] text-gray-400 uppercase">{l.role?.replace("_", " ")}</span>
+                  </TableCell>
+                  <TableCell className="normal-case font-mono text-[11px]">{l.action}</TableCell>
+                  <TableCell className="normal-case text-gray-500 text-[11px]">{l.fields?.join(", ") ?? "—"}</TableCell>
+                  <TableCell className="text-gray-400">{l.ip ?? "—"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Card>
     </div>
   );
 }

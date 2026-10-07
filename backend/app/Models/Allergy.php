@@ -7,6 +7,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Allergy extends Model
 {
+    protected $casts = [
+        'allergen' => 'encrypted',
+        'reaction' => 'encrypted',
+    ];
+
     protected $fillable = [
         'patient_id',
         'allergen',

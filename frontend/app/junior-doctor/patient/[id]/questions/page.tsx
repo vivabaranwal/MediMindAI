@@ -8,7 +8,7 @@ import { PatientHeader } from "@/components/junior-doctor/PatientHeader";
 import { AssessmentWorkspace } from "@/components/junior-doctor/AssessmentWorkspace";
 import { QuestionCard } from "@/components/junior-doctor/QuestionCard";
 import { ProgressTracker } from "@/components/junior-doctor/ProgressTracker";
-import { SummaryService } from "@/services/summary.service";
+import { Alert } from "@/components/ui/Alert";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/LoadingState";
@@ -27,7 +27,8 @@ export default function QuestionsPage({ params }: QuestionsPageProps) {
     updateQuestionStatus,
     updateQuestionText,
     answerQuestion,
-    setSummary,
+    compileSummary,
+    requestMoreQuestions,
     resetActiveAssessment,
   } = useJuniorDoctorStore();
 
@@ -35,6 +36,9 @@ export default function QuestionsPage({ params }: QuestionsPageProps) {
   const patient = patients.find((p) => p.id === patientId);
   const assessment = assessments[patientId];
   const [compiling, setCompiling] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   if (!patient || !assessment) {
     return (
@@ -50,18 +54,28 @@ export default function QuestionsPage({ params }: QuestionsPageProps) {
 
   const handleCompileSummary = async () => {
     setCompiling(true);
+    setError("");
     try {
-      const compiled = await SummaryService.compileSummary(
-        assessment.chiefComplaint,
-        assessment.questions,
-        patient.acuity
-      );
-      setSummary(patientId, compiled);
+      await compileSummary(patientId);
       router.push(`/junior-doctor/patient/${patientId}/summary`);
     } catch (err) {
-      console.error(err);
+      setError(err instanceof Error ? err.message : "Could not compile the case summary.");
     } finally {
       setCompiling(false);
+    }
+  };
+
+  const handleMoreQuestions = async () => {
+    setLoadingMore(true);
+    setError("");
+    setNotice("");
+    try {
+      const added = await requestMoreQuestions(patientId);
+      setNotice(added > 0 ? `${added} new question${added > 1 ? "s" : ""} added.` : "The AI has no further questions for this case.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not fetch more questions.");
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -82,10 +96,10 @@ export default function QuestionsPage({ params }: QuestionsPageProps) {
       <div className="min-h-[60vh] flex flex-col justify-center items-center space-y-4">
         <Spinner />
         <p className="text-sm font-bold text-gray-500 uppercase tracking-wider">
-          AI COMPILER SYNTHESIZING CLINICAL BRIEF...
+          AI IS COMPILING THE CASE SUMMARY...
         </p>
         <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold text-center">
-          Structuring Subjective complaint history, timeline markers, and clinical negatives list
+          Structuring the history, timeline and pertinent negatives
         </p>
       </div>
     );
@@ -166,6 +180,17 @@ export default function QuestionsPage({ params }: QuestionsPageProps) {
             </span>
           </div>
 
+          {error && (
+            <Alert type="error" titleText="AI request failed">
+              {error}
+            </Alert>
+          )}
+          {notice && !error && (
+            <Alert type="info" titleText="AI questions">
+              {notice}
+            </Alert>
+          )}
+
           <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
             {assessment.questions.map((q) => (
               <QuestionCard
@@ -185,6 +210,15 @@ export default function QuestionsPage({ params }: QuestionsPageProps) {
           <ProgressTracker questions={assessment.questions} />
 
           <Button
+            variant="secondary"
+            className="w-full tracking-wider font-bold py-3 text-xs"
+            onClick={handleMoreQuestions}
+            disabled={loadingMore || answeredCount === 0}
+          >
+            {loadingMore ? "ASKING AI..." : "ASK AI FOR FOLLOW-UP QUESTIONS"}
+          </Button>
+
+          <Button
             variant="primary"
             className="w-full tracking-wider font-bold py-3 text-xs"
             onClick={handleCompileSummary}
@@ -193,7 +227,7 @@ export default function QuestionsPage({ params }: QuestionsPageProps) {
             COMPILE CASE SUMMARY →
           </Button>
 
-          <Card titleText="residence guidelines" className="border border-gray-300">
+          <Card titleText="Intake guidance" className="border border-gray-300">
             <div className="text-xs font-semibold text-gray-550 space-y-2 leading-relaxed uppercase">
               <p>• Accept questions that cover symptom boundaries.</p>
               <p>• Reject questions irrelevant to this specific case presentation.</p>

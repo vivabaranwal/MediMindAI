@@ -5,73 +5,61 @@ namespace App\Services;
 use App\Models\AiBrief;
 use App\Models\Encounter;
 use App\Repositories\Contracts\AiBriefRepositoryInterface;
-use Illuminate\Support\Facades\Log;
+use App\Services\Ai\ConsentService;
+use App\Services\Ai\EncounterContextBuilder;
 
 class AiBriefService
 {
-    protected AiBriefRepositoryInterface $aiBriefRepository;
-    protected AIGatewayService $aiGatewayService;
-
     public function __construct(
-        AiBriefRepositoryInterface $aiBriefRepository,
-        AIGatewayService $aiGatewayService
+        protected AiBriefRepositoryInterface $aiBriefRepository,
+        protected AIGatewayService $ai,
+        protected EncounterContextBuilder $context,
+        protected ConsentService $consent,
     ) {
-        $this->aiBriefRepository = $aiBriefRepository;
-        $this->aiGatewayService = $aiGatewayService;
     }
 
-    /**
-     * Fetch AI Brief by Encounter ID.
-     */
+    /** The stored brief, or null if none has been generated yet. Never generates. */
     public function getBriefForEncounter(int $encounterId): ?AiBrief
     {
-        $brief = $this->aiBriefRepository->findByEncounterId($encounterId);
-        if (!$brief) {
-            try {
-                return $this->regenerateBrief($encounterId);
-            } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::error("On-the-fly brief generation failed: " . $e->getMessage());
-            }
-        }
-        return $brief;
+        return $this->aiBriefRepository->findByEncounterId($encounterId);
     }
 
     /**
-     * Regenerate AI Doctor Brief via AI Gateway.
+     * Generate (or regenerate) the brief from the encounter's current data.
+     *
+     * @throws \App\Exceptions\AiConsentRequiredException
+     * @throws \App\Exceptions\AiServiceException  nothing is stored if the AI call fails
      */
-    public function regenerateBrief(int $encounterId): AiBrief
+    public function generate(int $encounterId): AiBrief
     {
-        $encounter = Encounter::find($encounterId);
-        if (!$encounter) {
-            throw new \Exception('Encounter not found.');
-        }
+        $encounter = Encounter::with('patient')->findOrFail($encounterId);
+        $this->consent->assertAiConsent($encounter->patient);
 
-        // Invoke external Vision/OCR brief generation
-        $aiResponse = $this->aiGatewayService->generateDoctorBrief($encounterId);
+        $result = $this->ai->brief($this->context->forEncounter($encounter));
+        $meta = $result['meta'];
 
-        $briefData = [
-            'encounter_id' => $encounterId,
+        $data = [
+            'encounter_id' => $encounter->id,
             'patient_id' => $encounter->patient_id,
             'doctor_id' => $encounter->doctor_id,
-            'brief_text' => $aiResponse['brief'] ?? 'AI brief draft text',
-            'suggested_questions' => $aiResponse['suggested_questions'] ?? [],
-            'risk_level' => $aiResponse['risk_level'] ?? 'green',
-            'similar_cases' => $aiResponse['similar_cases'] ?? [],
-            'llm_model_used' => $aiResponse['model_used'] ?? 'gemini-1.5-pro',
-            'token_count' => $aiResponse['tokens_used'] ?? 0,
-            'generation_time_ms' => $aiResponse['generation_time_ms'] ?? 500,
+            'brief_text' => $result['brief'],
+            'suggested_questions' => $result['suggested_questions'],
+            'risk_level' => $result['risk_level'],
+            'risk_rationale' => $result['risk_rationale'],
+            'red_flags' => $result['red_flags'],
+            'similar_cases' => [], // similar-case matching is not implemented; stored empty, never invented
+            'llm_model_used' => $meta['model'],
+            'token_count' => ($meta['input_tokens'] ?? 0) + ($meta['output_tokens'] ?? 0),
+            'generation_time_ms' => $meta['latency_ms'],
             'reviewed_by_doctor' => false,
         ];
 
-        $existingBrief = $this->aiBriefRepository->findByEncounterId($encounterId);
-
-        if ($existingBrief) {
-            $this->aiBriefRepository->update($existingBrief->id, $briefData);
-            $aiBrief = $existingBrief->fresh();
-        } else {
-            $aiBrief = $this->aiBriefRepository->create($briefData);
+        $existing = $this->aiBriefRepository->findByEncounterId($encounterId);
+        if ($existing) {
+            $this->aiBriefRepository->update($existing->id, $data);
+            return $existing->fresh();
         }
 
-        return $aiBrief;
+        return $this->aiBriefRepository->create($data);
     }
 }

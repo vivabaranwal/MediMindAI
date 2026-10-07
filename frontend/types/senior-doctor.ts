@@ -1,5 +1,6 @@
+import type { Likelihood, LabValueDto, ReportDto } from "@/types/ai";
+
 export type RiskLevel = "low acuity" | "moderate acuity" | "high acuity" | "emergent acuity";
-export type ConfidenceLevel = "low" | "medium" | "high";
 
 export interface PreviousVisit {
   date: string;
@@ -11,13 +12,19 @@ export interface PreviousVisit {
 
 export interface UploadedReport {
   id: string;
+  reportId: number;
   name: string;
   type: "image" | "pdf";
   uploadedAt: string;
-  ocrFindings: string;
-  extractedLabValues: Record<string, string>;
-  abnormalFindings: string[];
-  clinicalObservations: string;
+  status: ReportDto["status"];
+  analysisError: string | null;
+  documentType: string | null;
+  summary: string | null;
+  values: LabValueDto[];
+  abnormalities: string[];
+  observations: string[];
+  /** e.g. "patient_name_mismatch", "low_confidence_ocr" */
+  warnings: string[];
 }
 
 export interface Patient {
@@ -31,6 +38,7 @@ export interface Patient {
   acuity: RiskLevel;
   chiefComplaint?: string;
   assignedDoctor?: string;
+  /** Present only when recorded; never defaulted. */
   vitals?: {
     bp?: string;
     hr?: number;
@@ -44,6 +52,7 @@ export interface Patient {
   currentMedications?: string[];
   previousVisits?: PreviousVisit[];
   uploadedReports?: UploadedReport[];
+  aiConsent?: boolean;
   encounterId?: number;
   appointmentId?: number;
 }
@@ -57,19 +66,16 @@ export interface QuestionAnswered {
 
 export interface JuniorDoctorAssessment {
   chiefComplaint: string;
-  notes: string;
-  timeline: string;
+  /** AI intake summary produced by the junior doctor's session, if any. */
+  summary?: {
+    subjective: string;
+    timeline: string;
+    clinicalNotes: string;
+    redFlags: string[];
+  };
   positives: string[];
   negatives: string[];
   questionsAnswered: QuestionAnswered[];
-}
-
-export interface Diagnosis {
-  code: string;
-  name: string;
-  confidence: number;
-  description: string;
-  rationale: string;
 }
 
 export interface Recommendation {
@@ -77,27 +83,11 @@ export interface Recommendation {
   type: "diagnosis" | "investigation" | "medication" | "treatment" | "procedure" | "followup";
   title: string;
   detail: string;
-  confidence: number; // percentage (e.g. 94 for 94%)
+  /** Qualitative likelihood from the model (diagnoses only). No fabricated percentages. */
+  likelihood?: Likelihood;
   evidence: string;
   status: "pending" | "accepted" | "modified" | "rejected";
   modifiedValue?: string;
-}
-
-export interface SimilarCase {
-  id: string;
-  caseCode: string;
-  similarityPercent: number;
-  outcomeSummary: string;
-  treatmentsUsed: string[];
-  recoveryTime: string;
-  recurrenceRate: string;
-  complications: string;
-}
-
-export interface OutcomeStatistic {
-  metricName: string;
-  value: string;
-  description: string;
 }
 
 export interface SOAPNote {
@@ -116,7 +106,8 @@ export interface PrescriptionMedication {
   frequency: string;
   duration: string;
   instructions: string;
-  alerts: string[];
+  /** Safety alerts from the server-side check (allergy rules + interaction review). */
+  alerts: { severity: "critical" | "warning" | "info"; message: string; source: "rule" | "model" }[];
 }
 
 export interface Prescription {

@@ -1,88 +1,111 @@
-version: '3.8'
+# MediMind: local / staging stack.
+#
+# Required: copy .env.example to .env and fill in the values. Compose refuses to start with
+# any required value missing (nothing here has a default secret).
+#
+# Only the web app (3000) is published. It proxies /api to the Laravel API over the private network, so the
+# browser holds a first-party httpOnly session cookie. The API, database, vector store and AI engine are not
+# reachable from outside Docker.
+
+x-backend-env: &backend-env
+  APP_ENV: ${APP_ENV:-production}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_KEY: "${APP_KEY:?set APP_KEY (see .env.example)}"
+  APP_URL: ${APP_URL:-http://localhost:3000}
+  # The browser-facing host: Sanctum only treats requests from here as the first-party web app.
+  SANCTUM_STATEFUL_DOMAINS: ${FRONTEND_HOST:-localhost:3000}
+  SESSION_DRIVER: database
+  SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-false}
+  SESSION_SAME_SITE: lax
+  # Only the frontend container can reach the API, so its forwarded headers are trusted.
+  TRUSTED_PROXIES: "*"
+  DB_CONNECTION: pgsql
+  DB_HOST: db
+  DB_PORT: 5432
+  DB_DATABASE: ${POSTGRES_DB:-medimind}
+  DB_USERNAME: ${POSTGRES_USER:-medimind}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  FASTAPI_URL: http://ai-engine:8080
+  FASTAPI_INTERNAL_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET}
+  OTP_SMS_DRIVER: ${OTP_SMS_DRIVER:-log}
+  SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+  SEED_CLINIC_PASSWORD: ${SEED_CLINIC_PASSWORD:-}
 
 services:
-  medimind-db:
+  db:
     image: postgres:16
-    container_name: medimind-db
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: medimind
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-medimind}
+      POSTGRES_USER: ${POSTGRES_USER:-medimind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - ./postgres_data_fresh:/var/lib/postgresql/data
-
-  redis:
-    image: redis:alpine
-    container_name: medimind-redis
-    restart: always
-    ports:
-      - "6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-medimind} -d ${POSTGRES_DB:-medimind}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   qdrant:
-    image: qdrant/qdrant
-    container_name: medimind-qdrant
-    restart: always
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+    image: qdrant/qdrant:v1.12.4
+    restart: unless-stopped
     volumes:
       - qdrant_storage:/qdrant/storage
 
   ai-engine:
     build:
       context: ./medimind-ai-engine
-      dockerfile: Dockerfile
-    container_name: medimind-ai-engine
-    restart: always
-    ports:
-      - "8080:8080"
-    env_file:
-      - ./medimind-ai-engine/.env
+    restart: unless-stopped
+    environment:
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set INTERNAL_API_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      QDRANT_URL: http://qdrant:6333
     depends_on:
       - qdrant
 
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    container_name: medimind-backend
-    restart: always
-    ports:
-      - "8000:8000"
-    env_file:
-      - ./backend/.env
-    environment:
-      - DB_CONNECTION=pgsql
-      - DB_HOST=medimind-db
-      - DB_PORT=5432
-      - DB_DATABASE=medimind
-      - DB_USERNAME=user
-      - DB_PASSWORD=password
-      - REDIS_HOST=redis
-      - FASTAPI_URL=http://ai-engine:8080
-      - FASTAPI_INTERNAL_SECRET=super-secret-token
+    restart: unless-stopped
+    environment: *backend-env
+    volumes:
+      - backend_storage:/var/www/html/storage/app
     depends_on:
-      - medimind-db
-      - redis
+      db:
+        condition: service_healthy
+      ai-engine:
+        condition: service_started
+
+  # Analyses uploaded reports (OCR, structuring, indexing) in the background.
+  queue-worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=240", "--sleep=3"]
+    environment: *backend-env
+    volumes:
+      - backend_storage:/var/www/html/storage/app
+    depends_on:
+      db:
+        condition: service_healthy
+      ai-engine:
+        condition: service_started
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: medimind-frontend
-    restart: always
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
-      - NEXT_PUBLIC_AI_ENGINE_URL=http://localhost:8080
+      BACKEND_INTERNAL_URL: http://backend:8000
+      # The public origin of the app, used as the first-party origin when proxying to the API.
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
     depends_on:
       - backend
-      - ai-engine
 
 volumes:
-  pgdata:
   qdrant_storage:
+  backend_storage:

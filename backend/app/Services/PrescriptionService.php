@@ -76,7 +76,7 @@ class PrescriptionService
     /**
      * Approve a prescription.
      */
-    public function approvePrescription(int $prescriptionId, int $doctorId): Prescription
+    public function approvePrescription(int $prescriptionId, int $doctorId, bool $acknowledgeCritical = false): Prescription
     {
         $prescription = $this->prescriptionRepository->find($prescriptionId);
         if (!$prescription) {
@@ -87,6 +87,22 @@ class PrescriptionService
             throw ValidationException::withMessages([
                 'prescription' => ['This prescription is already approved.'],
             ]);
+        }
+
+        // Only the doctor who wrote the prescription may sign it (super admins excepted).
+        if ((int) $prescription->doctor_id !== $doctorId && !auth()->user()?->hasRole('super_admin')) {
+            abort(403, 'Only the prescribing doctor can approve this prescription.');
+        }
+
+        // Server-side allergy gate: enforced here, whatever the UI did.
+        $allergies = $prescription->patient?->allergies()->pluck('allergen')->all() ?? [];
+        $names = collect($prescription->medicines ?? [])->pluck('name')->filter()->all();
+        $critical = array_values(array_filter(
+            app(\App\Services\Clinical\DrugAllergyChecker::class)->checkAll($names, $allergies),
+            fn ($a) => $a['severity'] === \App\Services\Clinical\DrugAllergyChecker::CRITICAL
+        ));
+        if ($critical && !$acknowledgeCritical) {
+            throw new \App\Exceptions\PrescriptionSafetyException($critical);
         }
 
         $this->prescriptionRepository->update($prescription->id, [

@@ -38,6 +38,7 @@ class AdminUserController extends Controller
 
     public function show(int $id): JsonResponse
     {
+        $this->guardSuperAdminTarget($id);
         $user = $this->adminUserService->getUserById($id);
         if (!$user) {
             return response()->json([
@@ -53,6 +54,7 @@ class AdminUserController extends Controller
 
     public function update(UpdateAdminUserRequest $request, int $id): JsonResponse
     {
+        $this->guardSuperAdminTarget($id);
         $user = $this->adminUserService->updateUser($id, $request->validated());
         if (!$user) {
             return response()->json([
@@ -69,6 +71,8 @@ class AdminUserController extends Controller
 
     public function destroy(int $id): JsonResponse
     {
+        $this->guardSuperAdminTarget($id);
+        abort_if($id === auth()->id(), 422, 'You cannot delete your own account.');
         $deleted = $this->adminUserService->deleteUser($id);
         if (!$deleted) {
             return response()->json([
@@ -80,5 +84,16 @@ class AdminUserController extends Controller
             'success' => true,
             'message' => 'Staff user deleted successfully.',
         ]);
+    }
+
+    /**
+     * A clinic admin must not be able to read, edit or delete a super admin account.
+     */
+    private function guardSuperAdminTarget(int $id): void
+    {
+        $target = \App\Models\User::find($id);
+        if ($target && $target->role === 'super_admin' && !auth()->user()?->hasRole('super_admin')) {
+            abort(403, 'Only a super admin can manage this account.');
+        }
     }
 }

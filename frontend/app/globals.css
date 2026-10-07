@@ -96,3 +96,16 @@
 .animate-fade-in-up {
   animation: fadeInUp 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* Printing: prescriptions print on A4 portrait. The page markup hides everything except the sheet. */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 15mm;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    background: #fff;
+  }
+}

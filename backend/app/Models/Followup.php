@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\EncryptedJson;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -23,9 +24,10 @@ class Followup extends Model
     ];
 
     protected $casts = [
+        'ai_summary' => 'encrypted',
         'scheduled_date' => 'date',
-        'questions' => 'array',
-        'responses' => 'array',
+        'questions' => EncryptedJson::class,
+        'responses' => EncryptedJson::class,
         'sent_at' => 'datetime',
         'responded_at' => 'datetime',
     ];

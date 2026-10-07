@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ReportType;
+use App\Casts\EncryptedJson;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -26,10 +27,13 @@ class Report extends Model
         'llm_model_used',
         'uploaded_at',
         'status',
+        'analysis_error',
     ];
 
     protected $casts = [
-        'ai_findings' => 'array',
+        'file_name' => 'encrypted',
+        'ai_summary' => 'encrypted',
+        'ai_findings' => EncryptedJson::class,
         'ai_processed' => 'boolean',
         'ai_processed_at' => 'datetime',
         'uploaded_at' => 'datetime',

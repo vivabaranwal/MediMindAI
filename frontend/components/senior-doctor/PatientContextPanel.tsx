@@ -3,6 +3,17 @@ import { Patient, UploadedReport } from "@/types/senior-doctor";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { ReportViewer } from "./ReportViewer";
+import { AiService } from "@/services/ai.service";
+import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
+import { toApiError } from "@/lib/errors";
+
+const STATUS_LABEL: Record<UploadedReport["status"], string> = {
+  pending_analysis: "Queued for analysis",
+  analyzing: "Analysing…",
+  analyzed: "Analysed",
+  failed: "Analysis failed",
+  not_analyzed: "Not analysed",
+};
 
 interface PatientContextPanelProps {
   patient: Patient;
@@ -11,6 +22,21 @@ interface PatientContextPanelProps {
 
 export const PatientContextPanel: React.FC<PatientContextPanelProps> = ({ patient, className = "" }) => {
   const [selectedReport, setSelectedReport] = useState<UploadedReport | null>(null);
+  const [reportError, setReportError] = useState("");
+  const loadEncounterForPatient = useSeniorDoctorStore((s) => s.loadEncounterForPatient);
+
+  // Keep the open viewer in sync after the store reloads this patient's reports.
+  const liveReport = selectedReport ? patient.uploadedReports?.find((r) => r.reportId === selectedReport.reportId) ?? selectedReport : null;
+
+  const handleReanalyze = async (reportId: number) => {
+    setReportError("");
+    try {
+      await AiService.reanalyzeReport(reportId);
+      await loadEncounterForPatient(patient.id);
+    } catch (err) {
+      setReportError(toApiError(err).message);
+    }
+  };
 
   return (
     <div className={`space-y-6 ${className}`}>
@@ -20,9 +46,11 @@ export const PatientContextPanel: React.FC<PatientContextPanelProps> = ({ patien
           <div>
             <span className="text-[9px] text-gray-400 block font-bold">Pre-existing Conditions</span>
             <ul className="list-disc pl-4 space-y-1 text-gray-550 normal-case font-normal mt-1">
-              {patient.medicalHistory?.map((h, i) => (
-                <li key={i}>{h}</li>
-              )) || <li>No history logged</li>}
+              {patient.medicalHistory && patient.medicalHistory.length > 0 ? (
+                patient.medicalHistory.map((h, i) => <li key={i}>{h}</li>)
+              ) : (
+                <li>No history logged</li>
+              )}
             </ul>
           </div>
 
@@ -78,6 +106,7 @@ export const PatientContextPanel: React.FC<PatientContextPanelProps> = ({ patien
 
       {/* Uploaded Scans & Reports Card */}
       <Card titleText="LABS & CLINICAL SCAN SHEETS" className="border border-gray-300">
+        {reportError && <p className="text-[11px] text-clinical-red mb-2">{reportError}</p>}
         {patient.uploadedReports && patient.uploadedReports.length > 0 ? (
           <div className="space-y-3.5 text-xs font-semibold uppercase tracking-wider text-gray-650 text-left">
             {patient.uploadedReports.map((report) => (
@@ -88,10 +117,15 @@ export const PatientContextPanel: React.FC<PatientContextPanelProps> = ({ patien
               >
                 <div>
                   <span className="text-gray-600 font-bold block">{report.name}</span>
-                  <span className="text-[10px] text-gray-400 block mt-0.5">Uploaded {report.uploadedAt}</span>
+                  <span className="text-[10px] text-gray-400 block mt-0.5">
+                    Uploaded {report.uploadedAt} · {STATUS_LABEL[report.status]}
+                  </span>
+                  {report.warnings.length > 0 && (
+                    <span className="text-[10px] text-clinical-amber block mt-0.5">⚠ Needs checking</span>
+                  )}
                 </div>
                 <Button variant="secondary" size="sm" className="h-7 text-[10px]">
-                  PREVIEW
+                  VIEW
                 </Button>
               </div>
             ))}
@@ -105,9 +139,10 @@ export const PatientContextPanel: React.FC<PatientContextPanelProps> = ({ patien
 
       {/* Report Review Center Component Modal */}
       <ReportViewer
-        report={selectedReport}
+        report={liveReport}
         isOpen={!!selectedReport}
         onClose={() => setSelectedReport(null)}
+        onReanalyze={handleReanalyze}
       />
     </div>
   );

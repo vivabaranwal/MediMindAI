@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Jobs\AnalyzeReportJob;
 use App\Models\Report;
 use App\Repositories\Contracts\ReportRepositoryInterface;
 use Illuminate\Http\UploadedFile;
@@ -38,7 +39,28 @@ class ReportService
             'uploaded_at' => now(),
         ];
 
-        return $this->reportRepository->create($reportData);
+        $report = $this->reportRepository->create($reportData);
+
+        AnalyzeReportJob::dispatch($report->id)->afterCommit();
+
+        return $report;
+    }
+
+    /**
+     * Permanently delete a report: its derived search index entries first, then the file and record.
+     *
+     * If the report was analysed its text was indexed in the AI engine; deleting the record while leaving
+     * that derived copy behind would defeat the deletion, so the delete is refused if the engine cannot
+     * confirm the purge (AiServiceException propagates and nothing is removed).
+     */
+    public function deleteReport(Report $report): void
+    {
+        if ($report->ai_processed) {
+            app(\App\Services\AIGatewayService::class)->deleteReport($report->id);
+        }
+
+        Storage::delete($report->file_path);
+        $report->delete();
     }
 
     /**

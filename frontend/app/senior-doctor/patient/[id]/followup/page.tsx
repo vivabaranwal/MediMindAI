@@ -5,11 +5,18 @@ import Link from "next/link";
 import { useSeniorDoctorStore } from "@/store/seniorDoctorStore";
 import { PatientHeader } from "@/components/senior-doctor/PatientHeader";
 import { FollowUpPlanner } from "@/components/senior-doctor/FollowUpPlanner";
+import { PrescriptionPrintSheet } from "@/components/senior-doctor/PrescriptionPrintSheet";
 import { DoctorBriefCard } from "@/components/senior-doctor/DoctorBriefCard";
 import { ClinicalTimeline } from "@/components/senior-doctor/ClinicalTimeline";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/LoadingState";
+import { Alert } from "@/components/ui/Alert";
+import { toApiError } from "@/lib/errors";
+import { toLocalIsoDate } from "@/lib/dates";
+import { useAuthStore } from "@/store/authStore";
+
+const IDLE = { status: "idle" as const };
 
 interface FollowUpPageProps {
   params: {
@@ -27,16 +34,20 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
     followups,
     saveFollowUp,
     completeConsultation,
+    ai,
+    loadBrief,
     loadEncounterForPatient,
     savePrescriptionDraft,
     completeConsultationApi,
   } = useSeniorDoctorStore();
 
   const patientId = Number(params.id);
+  const doctorUser = useAuthStore((s) => s.user);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -108,7 +119,7 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
 
       const dateObj = new Date();
       dateObj.setDate(dateObj.getDate() + days);
-      const followupDateStr = dateObj.toISOString().split("T")[0];
+      const followupDateStr = toLocalIsoDate(dateObj);
 
       const res = await savePrescriptionDraft(
         patient.encounterId,
@@ -117,20 +128,20 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
         followupDateStr
       );
 
-      if (res?.success && res?.data) {
+      const savedId = res.data?.id;
+      if (res.success && savedId) {
         useSeniorDoctorStore.setState((state) => ({
           prescriptions: {
             ...state.prescriptions,
             [patientId]: {
               ...state.prescriptions[patientId],
-              dbId: res.data.id
+              dbId: savedId
             }
           }
         }));
       }
-    } catch (err: unknown) {
-      const e = err as Error;
-      alert(e.message || "Failed to save follow-up details to backend.");
+    } catch (err) {
+      setActionError(toApiError(err, "Failed to save follow-up details.").message);
     }
   };
 
@@ -141,9 +152,8 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
       await completeConsultationApi(patient.encounterId);
       completeConsultation(patientId);
       setSuccess(true);
-    } catch (err: unknown) {
-      const e = err as Error;
-      alert(e.message || "Failed to complete consultation sign-off.");
+    } catch (err) {
+      setActionError(toApiError(err, "Failed to complete the consultation sign-off.").message);
     } finally {
       setCompleting(false);
     }
@@ -157,13 +167,25 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
   const canSignOff = isSoapSigned && isPrescriptionSigned && isFollowUpSaved;
   const isAlreadyCompleted = patient.status === "Completed";
 
+  const followUpDays = followup ? (followup.timeframe === "custom" ? Number(followup.customDays) || 0 : Number(followup.timeframe)) : 0;
+  const followUpLabel = followUpDays > 0 ? `After ${followUpDays} days` : null;
+  const isDone = success || isAlreadyCompleted;
+  const printable = isDone && prescription?.status === "approved" && prescription.medications.length > 0;
+
   return (
-    <div className="space-y-8 animate-fade-in-up">
+    <>
+    <div className="space-y-8 animate-fade-in-up print:hidden">
       {/* Patient Header */}
       <PatientHeader
         patient={patient}
         backHref={`/senior-doctor/patient/${patientId}`}
       />
+
+      {actionError && (
+        <Alert type="error" titleText="Action failed">
+          {actionError}
+        </Alert>
+      )}
 
       {success || isAlreadyCompleted ? (
         <div className="max-w-2xl mx-auto text-center space-y-6 bg-white border border-gray-300 p-8 rounded-[4px] animate-fade-in-up">
@@ -175,7 +197,10 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
             </p>
           </div>
 
-          <div className="flex justify-center gap-4 pt-4 border-t border-gray-200">
+          <div className="flex flex-wrap justify-center gap-4 pt-4 border-t border-gray-200">
+            {printable && (
+              <Button variant="secondary" size="md" onClick={() => window.print()}>PRINT PRESCRIPTION</Button>
+            )}
             <Link href="/senior-doctor/dashboard">
               <Button variant="secondary" size="md">RETURN TO DASHBOARD</Button>
             </Link>
@@ -257,6 +282,8 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
               patient={patient}
               assessment={assessment}
               recommendations={patientRecs}
+              brief={ai[patientId]?.brief ?? IDLE}
+              onRegenerateBrief={() => loadBrief(patientId, true)}
             />
 
             <ClinicalTimeline
@@ -270,5 +297,22 @@ export default function FollowUpPage({ params }: FollowUpPageProps) {
         </div>
       )}
     </div>
+
+    {printable && (
+      <section className="mt-8 print:mt-0">
+        <h2 className="text-sm font-bold text-gray-600 uppercase tracking-wider mb-3 print:hidden">Prescription Preview</h2>
+        <div className="w-fit max-w-full overflow-x-auto mx-auto border border-gray-300 shadow-sm print:w-auto print:overflow-visible print:border-0 print:shadow-none">
+          <PrescriptionPrintSheet
+            patient={patient}
+            prescription={prescription}
+            doctorName={doctorUser?.name || patient.assignedDoctor || "Prescribing doctor"}
+            complaint={patient.chiefComplaint}
+            advice={followup?.instructions}
+            followUp={followUpLabel}
+          />
+        </div>
+      </section>
+    )}
+    </>
   );
 }

@@ -61,7 +61,9 @@ class PatientRepository implements PatientRepositoryInterface
 
     public function checkDuplicate(string $name, string $mobile): ?Patient
     {
-        // Simple lookup by mobile (in production this checks matches against encrypted storage)
-        return Patient::where('mobile', $mobile)->first();
+        // The mobile number is encrypted at rest; match on its keyed hash (see BlindIndex).
+        $hash = \App\Support\BlindIndex::mobileHash($mobile);
+
+        return $hash === null ? null : Patient::where('mobile_hash', $hash)->first();
     }
 }

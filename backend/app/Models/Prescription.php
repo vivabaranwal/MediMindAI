@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\EncryptedJson;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -16,6 +17,7 @@ class Prescription extends Model
         'patient_id',
         'doctor_id',
         'medicines',
+        'diagnosis',
         'instructions',
         'followup_date',
         'is_ai_drafted',
@@ -25,7 +27,9 @@ class Prescription extends Model
     ];
 
     protected $casts = [
-        'medicines' => 'array',
+        'instructions' => 'encrypted',
+        'diagnosis' => 'encrypted',
+        'medicines' => EncryptedJson::class,
         'is_ai_drafted' => 'boolean',
         'doctor_approved' => 'boolean',
         'approved_at' => 'datetime',

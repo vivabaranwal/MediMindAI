@@ -27,6 +27,11 @@ COPY . .
 # Run Composer installation
 RUN composer install --no-interaction --optimize-autoloader --no-dev
 
+# The framework needs to write logs, cache and uploaded files; nothing else. Don't run as root.
+RUN mkdir -p storage/app/private storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache     && chown -R www-data:www-data storage bootstrap/cache
+USER www-data
+
 EXPOSE 8000
 
+# NOTE: `artisan serve` is a development server. For production put php-fpm + nginx in front instead.
 CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]

@@ -9,6 +9,23 @@ use Illuminate\Support\Facades\Hash;
 
 class AdminUserSeeder extends Seeder
 {
+    /**
+     * Known default passwords are for local development only. Elsewhere the password
+     * must be supplied explicitly, so a seeded production database never has a
+     * guessable account.
+     */
+    private function password(string $envKey): string
+    {
+        $configured = env($envKey);
+        if ($configured) {
+            return $configured;
+        }
+        if (app()->environment(['local', 'testing'])) {
+            return 'password123';
+        }
+        throw new \RuntimeException("Set {$envKey} before seeding in this environment.");
+    }
+
     public function run(): void
     {
         $admin = User::firstOrCreate(
@@ -16,7 +33,7 @@ class AdminUserSeeder extends Seeder
             [
                 'name' => 'Super Admin',
                 'mobile' => '+919999999999',
-                'password' => Hash::make('password123'),
+                'password' => Hash::make($this->password('SEED_ADMIN_PASSWORD')),
                 'role' => UserRole::SuperAdmin->value,
                 'status' => 'active',
                 'email_verified_at' => now(),

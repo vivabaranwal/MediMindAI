@@ -29,6 +29,7 @@ class SoapNoteController extends Controller
         if (!$soapNote) {
             return response()->json([
                 'success' => false,
+                'code' => 'soap_not_generated',
                 'message' => 'SOAP note not found for this encounter.',
             ], 404);
         }
@@ -36,8 +37,21 @@ class SoapNoteController extends Controller
         return response()->json([
             'success' => true,
             'data' => $soapNote,
+        ]);
+    }
+
+    /**
+     * Generate (or regenerate an unsigned) SOAP draft with AI.
+     */
+    public function generate(int $encounterId): JsonResponse
+    {
+        $soapNote = $this->soapNoteService->generateDraft($encounterId);
+
+        return response()->json([
+            'success' => true,
+            'data' => $soapNote,
             'event' => 'SOAP_GENERATED',
-            'encounter_id' => $encounterId
+            'encounter_id' => $encounterId,
         ]);
     }
 

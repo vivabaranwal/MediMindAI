@@ -2,6 +2,9 @@
 
 namespace App\Models;
 
+use App\Casts\EncryptedDate;
+use App\Casts\EncryptedJson;
+use App\Support\BlindIndex;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -22,15 +25,30 @@ class Patient extends Model
         'email',
         'address',
         'blood_group',
+        'medical_history',
+        'current_medications',
         'abha_id',
         'emergency_contact_name',
         'emergency_contact_mobile',
         'is_active',
     ];
 
+    /** Blind-index columns are internal and never serialised. */
+    protected $hidden = ['mobile_hash', 'search_index'];
+
     protected $casts = [
-        'date_of_birth' => 'date',
+        // Patient identifiers and clinical background are encrypted at rest (see docs/SECURITY.md).
+        'name' => 'encrypted',
+        'mobile' => 'encrypted',
+        'email' => 'encrypted',
+        'address' => 'encrypted',
+        'abha_id' => 'encrypted',
+        'emergency_contact_name' => 'encrypted',
+        'emergency_contact_mobile' => 'encrypted',
+        'date_of_birth' => EncryptedDate::class,
         'is_active' => 'boolean',
+        'medical_history' => EncryptedJson::class,
+        'current_medications' => EncryptedJson::class,
     ];
 
     /**
@@ -98,17 +116,30 @@ class Patient extends Model
     }
 
     /**
-     * Scope query to search patients by name, mobile, or patient code.
+     * Search by patient code, name (word prefixes of 3+ letters) or mobile number (digits).
+     * Names and numbers are encrypted, so this matches keyed hashes instead (see BlindIndex).
      */
     public function scopeSearch($query, $term)
     {
-        return $query->where(function($q) use ($term) {
-            $q->where('name', 'like', "%{$term}%")
-              ->orWhere('mobile', 'like', "%{$term}%")
-              ->orWhere('patient_code', 'like', "%{$term}%");
+        $term = trim((string) $term);
+        $groups = BlindIndex::searchGroups($term);
+
+        return $query->where(function ($q) use ($term, $groups) {
+            $q->where('patient_code', 'like', '%' . $term . '%');
+
+            if ($groups) {
+                $q->orWhere(function ($byIdentity) use ($groups) {
+                    foreach ($groups as $anyOf) {
+                        $byIdentity->where(function ($any) use ($anyOf) {
+                            foreach ($anyOf as $token) {
+                                $any->orWhere('search_index', 'like', '%' . $token . '%');
+                            }
+                        });
+                    }
+                });
+            }
         });
     }
-
 
     /**
      * Bootstrap the model and generate patient code.
@@ -116,6 +147,14 @@ class Patient extends Model
     protected static function boot()
     {
         parent::boot();
+
+        // Keep the searchable blind index in step with the encrypted name and mobile.
+        static::saving(function (Patient $patient) {
+            if (! $patient->exists || $patient->isDirty(['name', 'mobile']) || $patient->search_index === null) {
+                $patient->mobile_hash = BlindIndex::mobileHash($patient->mobile);
+                $patient->search_index = implode(' ', BlindIndex::patientTokens($patient->name, $patient->mobile));
+            }
+        });
 
         static::creating(function ($patient) {
             $nextId = (static::max('id') ?? 0) + 1;

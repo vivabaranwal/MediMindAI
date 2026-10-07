@@ -13,6 +13,9 @@ class ApprovePrescriptionRequest extends FormRequest
 
     public function rules(): array
     {
-        return [];
+        return [
+            // The doctor has reviewed critical allergy alerts and chooses to prescribe anyway.
+            'acknowledge_critical' => ['nullable', 'boolean'],
+        ];
     }
 }
